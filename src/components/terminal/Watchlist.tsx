@@ -6,6 +6,7 @@ import { fmtPct, fmtPrice } from "@/lib/format";
 import {
   addWatchlistSymbol,
   removeWatchlistSymbol,
+  useQuoteStream,
   useSnapshots,
   useWatchlist,
 } from "@/lib/hooks";
@@ -20,6 +21,7 @@ export function Watchlist({ selected, onSelect }: Props) {
   const symbols = wl?.symbols ?? [];
   const { data: snapData } = useSnapshots(symbols);
   const snapshots = snapData?.snapshots ?? {};
+  const live = useQuoteStream(symbols);
 
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -90,6 +92,14 @@ export function Watchlist({ selected, onSelect }: Props) {
           const s = snapshots[sym];
           const isSel = sym === selected;
           const up = s ? s.change >= 0 : true;
+          const tickDir = live.tickDir[sym];
+          const tickSeq = live.tickSeq[sym] ?? 0;
+          const tickCls =
+            tickDir === "up"
+              ? "tick-up"
+              : tickDir === "down"
+                ? "tick-down"
+                : "";
           return (
             <li
               key={sym}
@@ -104,7 +114,10 @@ export function Watchlist({ selected, onSelect }: Props) {
                 {isSel ? "▸ " : "  "}
                 {sym}
               </span>
-              <span className="text-right">
+              <span
+                key={`px-${tickSeq}`}
+                className={`text-right ${tickCls}`}
+              >
                 {s ? fmtPrice(s.lastPrice) : "—"}
               </span>
               <span
