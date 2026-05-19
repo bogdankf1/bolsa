@@ -20,7 +20,7 @@ export type Position = {
 
 export type Trade = {
   id: string;
-  ts: Date;
+  ts: string;
   side: "BUY" | "SELL";
   ticker: string;
   qty: number;
@@ -97,18 +97,14 @@ export const mockPositions: Position[] = [
   { ticker: "TSLA", qty: 15, avgCost: 232.4, currentPrice: 241.92 },
 ];
 
-const now = new Date();
-const t = (offsetMin: number) =>
-  new Date(now.getTime() - offsetMin * 60 * 1000);
-
 export const mockTrades: Trade[] = [
-  { id: "t1", ts: t(0), side: "BUY", ticker: "AAPL", qty: 10, price: 182.45, status: "FILLED" },
-  { id: "t2", ts: t(4), side: "SELL", ticker: "VOO", qty: 5, price: 441.2, status: "FILLED" },
-  { id: "t3", ts: t(18), side: "BUY", ticker: "TSLA", qty: 5, price: 240.11, status: "FILLED" },
-  { id: "t4", ts: t(42), side: "BUY", ticker: "QQQ", qty: 8, price: 388.55, status: "FILLED" },
-  { id: "t5", ts: t(73), side: "SELL", ticker: "AAPL", qty: 3, price: 181.9, status: "FILLED" },
-  { id: "t6", ts: t(120), side: "BUY", ticker: "AAPL", qty: 10, price: 178.42, status: "FILLED" },
-  { id: "t7", ts: t(180), side: "BUY", ticker: "SPY", qty: 4, price: 476.5, status: "FILLED" },
+  { id: "t1", ts: "09:42:31", side: "BUY", ticker: "AAPL", qty: 10, price: 182.45, status: "FILLED" },
+  { id: "t2", ts: "09:38:12", side: "SELL", ticker: "VOO", qty: 5, price: 441.2, status: "FILLED" },
+  { id: "t3", ts: "09:24:08", side: "BUY", ticker: "TSLA", qty: 5, price: 240.11, status: "FILLED" },
+  { id: "t4", ts: "09:00:47", side: "BUY", ticker: "QQQ", qty: 8, price: 388.55, status: "FILLED" },
+  { id: "t5", ts: "08:29:53", side: "SELL", ticker: "AAPL", qty: 3, price: 181.9, status: "FILLED" },
+  { id: "t6", ts: "07:42:11", side: "BUY", ticker: "AAPL", qty: 10, price: 178.42, status: "FILLED" },
+  { id: "t7", ts: "06:42:55", side: "BUY", ticker: "SPY", qty: 4, price: 476.5, status: "FILLED" },
 ];
 
 export const mockAccount = {

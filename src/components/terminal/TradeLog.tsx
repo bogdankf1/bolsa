@@ -1,5 +1,5 @@
 import { Panel } from "./Panel";
-import { fmtPrice, fmtTime } from "@/lib/format";
+import { fmtPrice } from "@/lib/format";
 import { mockTrades } from "@/lib/mock";
 
 export function TradeLog() {
@@ -24,7 +24,7 @@ export function TradeLog() {
           {mockTrades.map((t) => (
             <tr key={t.id} className="hover:bg-[color-mix(in_srgb,var(--color-phosphor)_5%,transparent)]">
               <td className="px-3 py-1 text-[var(--color-phosphor-dim)]">
-                {fmtTime(t.ts)}
+                {t.ts}
               </td>
               <td
                 className={`px-3 py-1 ${
