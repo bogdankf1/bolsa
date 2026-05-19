@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useSettings } from "@/lib/settings";
 
 export function Header() {
   const [now, setNow] = useState<string>("");
+  const { settings, toggleNormalMode, toggleAudioMuted } = useSettings();
 
   useEffect(() => {
     const tick = () => {
@@ -35,6 +37,30 @@ export function Header() {
         <span className="font-display text-base tabular-nums text-[var(--color-phosphor-dim)]">
           {now || "----.--.-- --:--:--"}
         </span>
+        <button
+          type="button"
+          onClick={toggleNormalMode}
+          title={settings.normalMode ? "switch to CRT mode" : "switch to NORMAL mode"}
+          className={`border px-2 py-[2px] tracking-[0.15em] ${
+            settings.normalMode
+              ? "border-[var(--color-phosphor)] glow"
+              : "border-[var(--color-phosphor-dark)] text-[var(--color-phosphor-dim)]"
+          }`}
+        >
+          {settings.normalMode ? "NRM" : "CRT"}
+        </button>
+        <button
+          type="button"
+          onClick={toggleAudioMuted}
+          title={settings.audioMuted ? "unmute audio" : "mute audio"}
+          className={`border px-2 py-[2px] tracking-[0.15em] ${
+            settings.audioMuted
+              ? "border-[var(--color-phosphor-dark)] text-[var(--color-phosphor-dim)]"
+              : "border-[var(--color-phosphor)] glow"
+          }`}
+        >
+          {settings.audioMuted ? "MUTE" : "SND"}
+        </button>
         <span className="border border-[var(--color-amber)] px-2 py-[2px] text-[var(--color-amber)] [text-shadow:0_0_4px_rgba(255,176,0,0.6)]">
           PAPER
         </span>

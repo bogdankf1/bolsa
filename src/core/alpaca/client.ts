@@ -35,6 +35,8 @@ export interface AlpacaClient {
     symbol: string,
     params: { timeframe: string; limit?: number; start?: string; end?: string },
   ): Promise<RawBarsResponse>;
+  closeAllPositions(): Promise<RawClosedPosition[]>;
+  cancelAllOrders(): Promise<RawCanceledOrder[]>;
 }
 
 export function createAlpacaClient(config: AlpacaConfig): AlpacaClient {
@@ -139,6 +141,14 @@ export function createAlpacaClient(config: AlpacaConfig): AlpacaClient {
         `/stocks/${encodeURIComponent(symbol)}/bars?${qp.toString()}`,
       );
     },
+
+    closeAllPositions: () =>
+      trading<RawClosedPosition[]>("/positions?cancel_orders=false", {
+        method: "DELETE",
+      }),
+
+    cancelAllOrders: () =>
+      trading<RawCanceledOrder[]>("/orders", { method: "DELETE" }),
   };
 }
 
@@ -265,3 +275,17 @@ export interface RawSnapshot {
 }
 
 export type RawMultiSnapshotResponse = Record<string, RawSnapshot>;
+
+export interface RawClosedPosition {
+  symbol: string;
+  status: number;
+  // Alpaca returns the order object inline when a close succeeds; we only
+  // need the count for the UI, so the body shape is loose.
+  body?: unknown;
+}
+
+export interface RawCanceledOrder {
+  id: string;
+  status: number;
+  body?: unknown;
+}

@@ -7,7 +7,10 @@ import { ChartPanel } from "@/components/terminal/ChartPanel";
 import { OrderEntry } from "@/components/terminal/OrderEntry";
 import { StatusBar } from "@/components/terminal/StatusBar";
 import { TradeLog } from "@/components/terminal/TradeLog";
+import { CommandPalette } from "@/components/terminal/CommandPalette";
 import { useWatchlist } from "@/lib/hooks";
+import { useHotkey } from "@/lib/hotkeys";
+import { focusTarget } from "@/lib/focus";
 
 export default function Home() {
   const { data: wl } = useWatchlist();
@@ -24,6 +27,13 @@ export default function Home() {
       setSelected(symbols[0]);
     }
   }, [wl, selected]);
+
+  // `/` focuses the watchlist symbol input
+  useHotkey("/", (e) => {
+    if (focusTarget("watchlist-input")) {
+      e.preventDefault();
+    }
+  });
 
   return (
     <main className="flex h-screen flex-col">
@@ -42,6 +52,8 @@ export default function Home() {
       <section className="h-[200px] min-h-[200px]">
         <TradeLog />
       </section>
+
+      <CommandPalette />
     </main>
   );
 }

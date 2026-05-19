@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Mono, VT323 } from "next/font/google";
 import "./globals.css";
+import { SettingsProvider } from "@/lib/settings";
 
 const ibmPlexMono = IBM_Plex_Mono({
   variable: "--font-ibm-plex-mono",
@@ -30,7 +31,9 @@ export default function RootLayout({
       className={`${ibmPlexMono.variable} ${vt323.variable} h-full antialiased`}
     >
       <body className="crt-screen crt-flicker min-h-full">
-        <div className="crt-boot min-h-screen">{children}</div>
+        <SettingsProvider>
+          <div className="crt-boot min-h-screen">{children}</div>
+        </SettingsProvider>
       </body>
     </html>
   );

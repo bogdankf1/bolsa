@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Panel } from "./Panel";
 import { fmtPrice, fmtUsd } from "@/lib/format";
 import { placeOrder, useSnapshots } from "@/lib/hooks";
+import { useHotkey } from "@/lib/hotkeys";
+import { useAudio } from "@/lib/audio";
 
 type OrderType = "market" | "limit";
 type Side = "buy" | "sell";
@@ -22,6 +24,7 @@ export function OrderEntry({ symbol }: Props) {
     id: string;
   } | null>(null);
 
+  const { play } = useAudio();
   const { data: snapData } = useSnapshots(symbol ? [symbol] : []);
   const snap = symbol ? snapData?.snapshots[symbol] : undefined;
 
@@ -61,6 +64,7 @@ export function OrderEntry({ symbol }: Props) {
       });
       setConfirmed({ side: pending.side, id: order.id });
       setPending(null);
+      play("fill");
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Order failed";
       setError(msg);
@@ -74,33 +78,40 @@ export function OrderEntry({ symbol }: Props) {
     setError(null);
   }
 
-  // Keyboard hotkeys: b / s to BUY / SELL (when not in input)
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement).tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-      if (pending) {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          void confirm();
-        } else if (e.key === "Escape") {
-          e.preventDefault();
-          cancel();
-        }
-        return;
-      }
-      if (e.key === "b") {
-        e.preventDefault();
-        review("buy");
-      } else if (e.key === "s") {
-        e.preventDefault();
-        review("sell");
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+  // Keyboard hotkeys via global dispatcher.
+  const onBuy = useCallback(
+    (e: KeyboardEvent) => {
+      e.preventDefault();
+      review("buy");
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pending, symbol, qty, type, limitPx]);
+    [symbol],
+  );
+  const onSell = useCallback(
+    (e: KeyboardEvent) => {
+      e.preventDefault();
+      review("sell");
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [symbol],
+  );
+  const onEnter = useCallback(
+    (e: KeyboardEvent) => {
+      e.preventDefault();
+      void confirm();
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [pending, symbol, qty, type, limitPx],
+  );
+  const onEscape = useCallback((e: KeyboardEvent) => {
+    e.preventDefault();
+    cancel();
+  }, []);
+
+  useHotkey("b", onBuy, { enabled: !pending });
+  useHotkey("s", onSell, { enabled: !pending });
+  useHotkey("Enter", onEnter, { enabled: !!pending });
+  useHotkey("Escape", onEscape, { enabled: !!pending });
 
   return (
     <Panel title="Order Entry" rightSlot={symbol ?? "—"}>
