@@ -30,6 +30,7 @@ export interface AlpacaClient {
   latestQuotes(symbols: string[]): Promise<RawMultiQuoteResponse>;
   latestTrade(symbol: string): Promise<RawTradeResponse>;
   latestTrades(symbols: string[]): Promise<RawMultiTradeResponse>;
+  snapshots(symbols: string[]): Promise<RawMultiSnapshotResponse>;
   bars(
     symbol: string,
     params: { timeframe: string; limit?: number; start?: string; end?: string },
@@ -122,6 +123,11 @@ export function createAlpacaClient(config: AlpacaConfig): AlpacaClient {
     latestTrades: (symbols) =>
       data<RawMultiTradeResponse>(
         `/stocks/trades/latest?symbols=${symbols.map(encodeURIComponent).join(",")}&feed=${feed}`,
+      ),
+
+    snapshots: (symbols) =>
+      data<RawMultiSnapshotResponse>(
+        `/stocks/snapshots?symbols=${symbols.map(encodeURIComponent).join(",")}&feed=${feed}`,
       ),
 
     bars: (symbol, params) => {
@@ -249,3 +255,13 @@ export interface RawBarsResponse {
   bars: RawBar[];
   next_page_token: string | null;
 }
+
+export interface RawSnapshot {
+  latestTrade?: RawTrade;
+  latestQuote?: RawQuote;
+  minuteBar?: RawBar;
+  dailyBar?: RawBar;
+  prevDailyBar?: RawBar;
+}
+
+export type RawMultiSnapshotResponse = Record<string, RawSnapshot>;

@@ -1,37 +1,82 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Panel } from "./Panel";
 import { fmtPct, fmtPrice } from "@/lib/format";
-import type { Symbol } from "@/lib/mock";
+import {
+  addWatchlistSymbol,
+  removeWatchlistSymbol,
+  useSnapshots,
+  useWatchlist,
+} from "@/lib/hooks";
 
 type Props = {
-  symbols: Symbol[];
-  selected: string;
+  selected: string | null;
   onSelect: (ticker: string) => void;
 };
 
-export function Watchlist({ symbols, selected, onSelect }: Props) {
+export function Watchlist({ selected, onSelect }: Props) {
+  const { data: wl } = useWatchlist();
+  const symbols = wl?.symbols ?? [];
+  const { data: snapData } = useSnapshots(symbols);
+  const snapshots = snapData?.snapshots ?? {};
+
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+
   // Keyboard nav: j/k to move selection
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
-      const idx = symbols.findIndex((s) => s.ticker === selected);
+      if (symbols.length === 0) return;
+      const idx = selected ? symbols.indexOf(selected) : -1;
       if (e.key === "j" || e.key === "ArrowDown") {
         e.preventDefault();
-        const next = symbols[(idx + 1) % symbols.length];
-        if (next) onSelect(next.ticker);
+        onSelect(symbols[(idx + 1 + symbols.length) % symbols.length]);
       } else if (e.key === "k" || e.key === "ArrowUp") {
         e.preventDefault();
-        const prev =
-          symbols[(idx - 1 + symbols.length) % symbols.length];
-        if (prev) onSelect(prev.ticker);
+        onSelect(
+          symbols[(idx - 1 + symbols.length) % symbols.length],
+        );
+      } else if (e.key === "d" && selected) {
+        e.preventDefault();
+        void handleRemove(selected);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [symbols, selected, onSelect]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbols, selected]);
+
+  async function handleAdd(sym: string) {
+    if (!sym) return;
+    setBusy(true);
+    try {
+      await addWatchlistSymbol(sym);
+      setInput("");
+      onSelect(sym.trim().toUpperCase());
+    } catch (e) {
+      console.error("add symbol failed", e);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRemove(sym: string) {
+    setBusy(true);
+    try {
+      await removeWatchlistSymbol(sym);
+      if (selected === sym) {
+        const next = symbols.find((s) => s !== sym);
+        if (next) onSelect(next);
+      }
+    } catch (e) {
+      console.error("remove symbol failed", e);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <Panel title="Watchlist" rightSlot={`${symbols.length} symbols`}>
@@ -41,13 +86,14 @@ export function Watchlist({ symbols, selected, onSelect }: Props) {
         <span className="text-right">CHG%</span>
       </div>
       <ul className="divide-y divide-[var(--color-phosphor-faint)]">
-        {symbols.map((s) => {
-          const up = s.change >= 0;
-          const isSel = s.ticker === selected;
+        {symbols.map((sym) => {
+          const s = snapshots[sym];
+          const isSel = sym === selected;
+          const up = s ? s.change >= 0 : true;
           return (
             <li
-              key={s.ticker}
-              onClick={() => onSelect(s.ticker)}
+              key={sym}
+              onClick={() => onSelect(sym)}
               className={`grid cursor-pointer grid-cols-[2fr_3fr_2fr] gap-2 px-3 py-[6px] text-sm tabular-nums transition-colors ${
                 isSel
                   ? "bg-[color-mix(in_srgb,var(--color-phosphor)_15%,transparent)] glow"
@@ -56,39 +102,53 @@ export function Watchlist({ symbols, selected, onSelect }: Props) {
             >
               <span className="font-medium">
                 {isSel ? "▸ " : "  "}
-                {s.ticker}
+                {sym}
               </span>
-              <span className="text-right">{fmtPrice(s.price)}</span>
+              <span className="text-right">
+                {s ? fmtPrice(s.lastPrice) : "—"}
+              </span>
               <span
                 className={`text-right ${
-                  up
-                    ? "text-[var(--color-gain)]"
-                    : "text-[var(--color-loss)] glow-loss"
+                  s == null
+                    ? "text-[var(--color-phosphor-dim)]"
+                    : up
+                      ? "text-[var(--color-gain)]"
+                      : "text-[var(--color-loss)] glow-loss"
                 }`}
               >
-                {fmtPct(s.changePct)}
+                {s ? fmtPct(s.changePct) : "—"}
               </span>
             </li>
           );
         })}
+        {symbols.length === 0 && wl && (
+          <li className="px-3 py-4 text-center text-xs text-[var(--color-phosphor-dim)]">
+            empty — add a symbol below
+          </li>
+        )}
       </ul>
       <div className="border-t border-[var(--color-phosphor-dark)] px-3 py-2">
-        <div className="flex items-center gap-2 text-sm">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleAdd(input.trim().toUpperCase());
+          }}
+          className="flex items-center gap-2 text-sm"
+        >
           <span className="text-[var(--color-phosphor-dim)]">&gt;</span>
           <input
             type="text"
             placeholder="ADD SYMBOL..."
-            className="crt-input flex-1 border-none px-0 uppercase"
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                const v = (e.target as HTMLInputElement).value;
-                if (v) console.log("add", v);
-                (e.target as HTMLInputElement).value = "";
-              }
-            }}
+            value={input}
+            onChange={(e) => setInput(e.target.value.toUpperCase())}
+            disabled={busy}
+            className="crt-input flex-1 border-none px-0 uppercase disabled:opacity-50"
           />
           <span className="cursor-blink" />
-        </div>
+        </form>
+        <p className="mt-1 text-[10px] text-[var(--color-phosphor-dim)]">
+          [j/k] nav · [d] delete · [Enter] add
+        </p>
       </div>
     </Panel>
   );

@@ -2,9 +2,10 @@ import type {
   AlpacaClient,
   RawBar,
   RawQuote,
+  RawSnapshot,
   RawTrade,
 } from "./alpaca/client";
-import type { Bar, LatestTrade, Quote, Timeframe } from "./types";
+import type { Bar, LatestTrade, Quote, Snapshot, Timeframe } from "./types";
 
 function adaptQuote(symbol: string, q: RawQuote): Quote {
   return {
@@ -62,6 +63,49 @@ export async function getLatestTrades(
   const out: Record<string, LatestTrade> = {};
   for (const [sym, t] of Object.entries(r.trades ?? {})) {
     out[sym] = adaptTrade(sym, t);
+  }
+  return out;
+}
+
+function adaptSnapshot(symbol: string, s: RawSnapshot): Snapshot {
+  const lastPrice =
+    s.latestTrade?.p ??
+    s.minuteBar?.c ??
+    s.dailyBar?.c ??
+    s.prevDailyBar?.c ??
+    0;
+  const prevClose = s.prevDailyBar?.c ?? 0;
+  const change = lastPrice - prevClose;
+  const changePct = prevClose === 0 ? 0 : (change / prevClose) * 100;
+  return {
+    symbol,
+    lastPrice,
+    bidPrice: s.latestQuote?.bp ?? 0,
+    askPrice: s.latestQuote?.ap ?? 0,
+    bidSize: s.latestQuote?.bs ?? 0,
+    askSize: s.latestQuote?.as ?? 0,
+    dayOpen: s.dailyBar?.o ?? 0,
+    dayHigh: s.dailyBar?.h ?? 0,
+    dayLow: s.dailyBar?.l ?? 0,
+    dayClose: s.dailyBar?.c ?? 0,
+    dayVolume: s.dailyBar?.v ?? 0,
+    prevClose,
+    change,
+    changePct,
+    timestamp:
+      s.latestTrade?.t ?? s.latestQuote?.t ?? s.dailyBar?.t ?? "",
+  };
+}
+
+export async function getSnapshots(
+  client: AlpacaClient,
+  symbols: string[],
+): Promise<Record<string, Snapshot>> {
+  if (symbols.length === 0) return {};
+  const r = await client.snapshots(symbols);
+  const out: Record<string, Snapshot> = {};
+  for (const [sym, snap] of Object.entries(r)) {
+    out[sym] = adaptSnapshot(sym, snap);
   }
   return out;
 }

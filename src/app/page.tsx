@@ -1,32 +1,39 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Header } from "@/components/terminal/Header";
 import { Watchlist } from "@/components/terminal/Watchlist";
 import { ChartPanel } from "@/components/terminal/ChartPanel";
 import { OrderEntry } from "@/components/terminal/OrderEntry";
 import { StatusBar } from "@/components/terminal/StatusBar";
 import { TradeLog } from "@/components/terminal/TradeLog";
-import { mockWatchlist } from "@/lib/mock";
+import { useWatchlist } from "@/lib/hooks";
 
 export default function Home() {
-  const [selected, setSelected] = useState(mockWatchlist[0].ticker);
-  const symbol =
-    mockWatchlist.find((s) => s.ticker === selected) ?? mockWatchlist[0];
+  const { data: wl } = useWatchlist();
+  const [selected, setSelected] = useState<string | null>(null);
+
+  // Auto-select first symbol when watchlist arrives or selection becomes stale
+  useEffect(() => {
+    const symbols = wl?.symbols ?? [];
+    if (symbols.length === 0) {
+      setSelected(null);
+      return;
+    }
+    if (!selected || !symbols.includes(selected)) {
+      setSelected(symbols[0]);
+    }
+  }, [wl, selected]);
 
   return (
     <main className="flex h-screen flex-col">
       <Header />
 
       <section className="grid min-h-0 flex-1 grid-cols-[minmax(240px,280px)_1fr]">
-        <Watchlist
-          symbols={mockWatchlist}
-          selected={selected}
-          onSelect={setSelected}
-        />
+        <Watchlist selected={selected} onSelect={setSelected} />
         <div className="grid min-h-0 grid-rows-[1fr_auto] border-l border-[var(--color-phosphor-dark)]">
-          <ChartPanel symbol={symbol} />
-          <OrderEntry symbol={symbol} />
+          <ChartPanel symbol={selected} />
+          <OrderEntry symbol={selected} />
         </div>
       </section>
 

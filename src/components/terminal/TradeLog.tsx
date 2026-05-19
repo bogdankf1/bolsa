@@ -1,12 +1,31 @@
+"use client";
+
 import { Panel } from "./Panel";
 import { fmtPrice } from "@/lib/format";
-import { mockTrades } from "@/lib/mock";
+import { useTrades } from "@/lib/hooks";
+
+function fmtClock(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleTimeString("en-US", {
+      hour12: false,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  } catch {
+    return "--:--:--";
+  }
+}
 
 export function TradeLog() {
+  const { data: trades, isLoading } = useTrades(100);
+  const items = trades ?? [];
+
   return (
     <Panel
       title="Trade Log"
-      rightSlot={`${mockTrades.length} fills`}
+      rightSlot={items.length === 0 ? (isLoading ? "loading…" : "0 fills") : `${items.length} fills`}
       bodyClassName="font-mono"
     >
       <table className="w-full text-sm tabular-nums">
@@ -21,28 +40,46 @@ export function TradeLog() {
           </tr>
         </thead>
         <tbody className="divide-y divide-[var(--color-phosphor-faint)]">
-          {mockTrades.map((t) => (
-            <tr key={t.id} className="hover:bg-[color-mix(in_srgb,var(--color-phosphor)_5%,transparent)]">
-              <td className="px-3 py-1 text-[var(--color-phosphor-dim)]">
-                {t.ts}
-              </td>
-              <td
-                className={`px-3 py-1 ${
-                  t.side === "BUY"
-                    ? "text-[var(--color-gain)]"
-                    : "text-[var(--color-loss)] glow-loss"
-                }`}
+          {items.map((t) => {
+            const price = t.filledAvgPrice ?? t.limitPrice ?? 0;
+            return (
+              <tr
+                key={t.id}
+                className="hover:bg-[color-mix(in_srgb,var(--color-phosphor)_5%,transparent)]"
               >
-                {t.side}
-              </td>
-              <td className="px-3 py-1">{t.ticker}</td>
-              <td className="px-3 py-1 text-right">{t.qty}</td>
-              <td className="px-3 py-1 text-right">@ {fmtPrice(t.price)}</td>
-              <td className="px-3 py-1 text-[var(--color-phosphor-dim)]">
-                {t.status}
+                <td className="px-3 py-1 text-[var(--color-phosphor-dim)]">
+                  {fmtClock(t.filledAt ?? t.submittedAt)}
+                </td>
+                <td
+                  className={`px-3 py-1 ${
+                    t.side === "buy"
+                      ? "text-[var(--color-gain)]"
+                      : "text-[var(--color-loss)] glow-loss"
+                  }`}
+                >
+                  {t.side.toUpperCase()}
+                </td>
+                <td className="px-3 py-1">{t.symbol}</td>
+                <td className="px-3 py-1 text-right">{t.filledQty || t.qty}</td>
+                <td className="px-3 py-1 text-right">
+                  {price > 0 ? `@ ${fmtPrice(price)}` : "—"}
+                </td>
+                <td className="px-3 py-1 text-[var(--color-phosphor-dim)] uppercase">
+                  {t.status.replace(/_/g, " ")}
+                </td>
+              </tr>
+            );
+          })}
+          {items.length === 0 && !isLoading && (
+            <tr>
+              <td
+                colSpan={6}
+                className="px-3 py-6 text-center text-xs text-[var(--color-phosphor-dim)]"
+              >
+                no fills yet
               </td>
             </tr>
-          ))}
+          )}
         </tbody>
       </table>
     </Panel>

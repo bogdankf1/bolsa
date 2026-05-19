@@ -126,6 +126,24 @@ export interface TradeTick {
   timestamp: string;
 }
 
+export interface Snapshot {
+  symbol: string;
+  lastPrice: number;
+  bidPrice: number;
+  askPrice: number;
+  bidSize: number;
+  askSize: number;
+  dayOpen: number;
+  dayHigh: number;
+  dayLow: number;
+  dayClose: number;
+  dayVolume: number;
+  prevClose: number;
+  change: number;
+  changePct: number;
+  timestamp: string;
+}
+
 export type StreamEvent =
   | { type: "quote"; data: QuoteTick }
   | { type: "trade"; data: TradeTick }

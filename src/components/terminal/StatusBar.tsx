@@ -1,22 +1,36 @@
+"use client";
+
 import { fmtPct, fmtUsd } from "@/lib/format";
-import { mockAccount } from "@/lib/mock";
+import { usePortfolio } from "@/lib/hooks";
 
 export function StatusBar() {
-  const a = mockAccount;
-  const pnl = a.portfolioValue - a.startingBalance;
-  const pnlPct = (pnl / a.startingBalance) * 100;
-  const up = pnl >= 0;
+  const { data } = usePortfolio();
+
+  const portfolioValue = data?.portfolioValue ?? 0;
+  const cash = data?.cash ?? 0;
+  const buyingPower = data?.buyingPower ?? 0;
+  const unrealizedPl = data?.unrealizedPl ?? 0;
+  const unrealizedPlPct = data?.unrealizedPlPct ?? 0;
+  const up = unrealizedPl >= 0;
 
   return (
     <div className="grid grid-cols-4 items-center gap-4 border-y border-[var(--color-phosphor-dark)] bg-[color-mix(in_srgb,var(--color-phosphor)_4%,transparent)] px-4 py-1.5 text-xs font-display">
-      <Cell label="PORTFOLIO" value={fmtUsd(a.portfolioValue)} strong />
       <Cell
-        label="P&L"
-        value={`${fmtUsd(pnl, { sign: true })} (${fmtPct(pnlPct)})`}
+        label="PORTFOLIO"
+        value={data ? fmtUsd(portfolioValue) : "—"}
+        strong
+      />
+      <Cell
+        label="UNREALIZED P&L"
+        value={
+          data
+            ? `${fmtUsd(unrealizedPl, { sign: true })} (${fmtPct(unrealizedPlPct)})`
+            : "—"
+        }
         accent={up ? "gain" : "loss"}
       />
-      <Cell label="CASH" value={fmtUsd(a.cash)} />
-      <Cell label="BUYING POWER" value={fmtUsd(a.buyingPower)} />
+      <Cell label="CASH" value={data ? fmtUsd(cash) : "—"} />
+      <Cell label="BUYING POWER" value={data ? fmtUsd(buyingPower) : "—"} />
     </div>
   );
 }

@@ -3,27 +3,41 @@
 import { useMemo, useState } from "react";
 import { Panel } from "./Panel";
 import { fmtPrice, fmtVolume } from "@/lib/format";
-import { generateCandles, type Symbol } from "@/lib/mock";
+import { useBars, useSnapshots } from "@/lib/hooks";
+import type { Timeframe } from "@/core/types";
 
-const TIMEFRAMES = ["1D", "1W", "1M", "3M", "1Y"] as const;
-type Timeframe = (typeof TIMEFRAMES)[number];
+const TIMEFRAMES: Timeframe[] = ["1Min", "15Min", "1H", "1D", "1W"];
 
-type Props = { symbol: Symbol };
+const TF_LABEL: Record<Timeframe, string> = {
+  "1Min": "1m",
+  "5Min": "5m",
+  "15Min": "15m",
+  "1H": "1H",
+  "1D": "1D",
+  "1W": "1W",
+};
+
+type Props = { symbol: string | null };
 
 export function ChartPanel({ symbol }: Props) {
   const [tf, setTf] = useState<Timeframe>("1D");
+  const { data: barsData, isLoading } = useBars(symbol, tf);
+  const { data: snapData } = useSnapshots(symbol ? [symbol] : []);
+  const snap = symbol ? snapData?.snapshots[symbol] : undefined;
 
-  const candles = useMemo(
-    () => generateCandles(symbol.price, 90),
-    [symbol.price],
-  );
+  const candles = barsData?.bars ?? [];
 
   const { lo, hi } = useMemo(() => {
+    if (candles.length === 0) return { lo: 0, hi: 1 };
     let lo = Infinity;
     let hi = -Infinity;
     for (const c of candles) {
-      if (c.l < lo) lo = c.l;
-      if (c.h > hi) hi = c.h;
+      if (c.low < lo) lo = c.low;
+      if (c.high > hi) hi = c.high;
+    }
+    if (lo === hi) {
+      lo -= 1;
+      hi += 1;
     }
     return { lo, hi };
   }, [candles]);
@@ -32,11 +46,10 @@ export function ChartPanel({ symbol }: Props) {
   const H = 280;
   const padX = 24;
   const padY = 12;
-  const cw = (W - padX * 2) / candles.length;
+  const cw = candles.length > 0 ? (W - padX * 2) / candles.length : 0;
   const yFor = (v: number) =>
     padY + ((hi - v) / (hi - lo)) * (H - padY * 2);
 
-  // grid lines (5 horizontal)
   const gridLines = useMemo(() => {
     const out: { y: number; v: number }[] = [];
     for (let i = 0; i <= 5; i++) {
@@ -49,7 +62,7 @@ export function ChartPanel({ symbol }: Props) {
 
   return (
     <Panel
-      title={`Chart — ${symbol.ticker} — ${tf}`}
+      title={`Chart — ${symbol ?? "—"} — ${TF_LABEL[tf]}`}
       rightSlot={
         <div className="flex gap-1 text-[10px]">
           {TIMEFRAMES.map((t) => (
@@ -62,7 +75,7 @@ export function ChartPanel({ symbol }: Props) {
                   : "border border-[var(--color-phosphor-dark)] text-[var(--color-phosphor-dim)] hover:border-[var(--color-phosphor)] hover:text-[var(--color-phosphor)]"
               }`}
             >
-              {t}
+              {TF_LABEL[t]}
             </button>
           ))}
         </div>
@@ -71,74 +84,86 @@ export function ChartPanel({ symbol }: Props) {
     >
       <div className="flex h-full flex-col">
         <div className="relative flex-1 p-2">
-          <svg
-            viewBox={`0 0 ${W} ${H}`}
-            preserveAspectRatio="none"
-            className="h-full w-full"
-          >
-            {/* grid */}
-            {gridLines.map((g, i) => (
-              <g key={i}>
-                <line
-                  x1={padX}
-                  x2={W - padX}
-                  y1={g.y}
-                  y2={g.y}
-                  stroke="#1a3a1a"
-                  strokeDasharray="2 4"
-                  strokeWidth={1}
-                />
-                <text
-                  x={W - padX + 4}
-                  y={g.y + 3}
-                  fontSize={9}
-                  fill="#00aa2a"
-                  fontFamily="var(--font-mono)"
-                >
-                  {fmtPrice(g.v)}
-                </text>
-              </g>
-            ))}
-            {/* candles */}
-            {candles.map((c, i) => {
-              const x = padX + i * cw + cw / 2;
-              const up = c.c >= c.o;
-              const color = up ? "#00FF41" : "#FF3333";
-              const bodyTop = yFor(Math.max(c.o, c.c));
-              const bodyBot = yFor(Math.min(c.o, c.c));
-              const bodyH = Math.max(1, bodyBot - bodyTop);
-              return (
+          {isLoading && candles.length === 0 ? (
+            <div className="flex h-full items-center justify-center text-xs text-[var(--color-phosphor-dim)] cursor-blink">
+              LOADING BARS
+            </div>
+          ) : candles.length === 0 ? (
+            <div className="flex h-full items-center justify-center text-xs text-[var(--color-phosphor-dim)]">
+              NO DATA
+            </div>
+          ) : (
+            <svg
+              viewBox={`0 0 ${W} ${H}`}
+              preserveAspectRatio="none"
+              className="h-full w-full"
+            >
+              {gridLines.map((g, i) => (
                 <g key={i}>
                   <line
-                    x1={x}
-                    x2={x}
-                    y1={yFor(c.h)}
-                    y2={yFor(c.l)}
-                    stroke={color}
+                    x1={padX}
+                    x2={W - padX}
+                    y1={g.y}
+                    y2={g.y}
+                    stroke="#1a3a1a"
+                    strokeDasharray="2 4"
                     strokeWidth={1}
                   />
-                  <rect
-                    x={x - Math.max(1, cw * 0.35)}
-                    y={bodyTop}
-                    width={Math.max(2, cw * 0.7)}
-                    height={bodyH}
-                    fill={up ? color : "#0a0a0a"}
-                    stroke={color}
-                    strokeWidth={1}
-                  />
+                  <text
+                    x={W - padX + 4}
+                    y={g.y + 3}
+                    fontSize={9}
+                    fill="#00aa2a"
+                    fontFamily="var(--font-mono)"
+                  >
+                    {fmtPrice(g.v)}
+                  </text>
                 </g>
-              );
-            })}
-          </svg>
+              ))}
+              {candles.map((c, i) => {
+                const x = padX + i * cw + cw / 2;
+                const up = c.close >= c.open;
+                const color = up ? "#00FF41" : "#FF3333";
+                const bodyTop = yFor(Math.max(c.open, c.close));
+                const bodyBot = yFor(Math.min(c.open, c.close));
+                const bodyH = Math.max(1, bodyBot - bodyTop);
+                return (
+                  <g key={i}>
+                    <line
+                      x1={x}
+                      x2={x}
+                      y1={yFor(c.high)}
+                      y2={yFor(c.low)}
+                      stroke={color}
+                      strokeWidth={1}
+                    />
+                    <rect
+                      x={x - Math.max(1, cw * 0.35)}
+                      y={bodyTop}
+                      width={Math.max(2, cw * 0.7)}
+                      height={bodyH}
+                      fill={up ? color : "#0a0a0a"}
+                      stroke={color}
+                      strokeWidth={1}
+                    />
+                  </g>
+                );
+              })}
+            </svg>
+          )}
         </div>
         <div className="grid grid-cols-5 gap-2 border-t border-[var(--color-phosphor-dark)] px-3 py-2 font-display text-base tabular-nums">
-          <Stat label="LAST" value={fmtPrice(symbol.price)} accent />
-          <Stat label="BID" value={fmtPrice(symbol.bid)} />
-          <Stat label="ASK" value={fmtPrice(symbol.ask)} />
-          <Stat label="VOL" value={fmtVolume(symbol.volume)} />
+          <Stat label="LAST" value={snap ? fmtPrice(snap.lastPrice) : "—"} accent />
+          <Stat label="BID" value={snap ? fmtPrice(snap.bidPrice) : "—"} />
+          <Stat label="ASK" value={snap ? fmtPrice(snap.askPrice) : "—"} />
+          <Stat label="VOL" value={snap ? fmtVolume(snap.dayVolume) : "—"} />
           <Stat
             label="DAY RANGE"
-            value={`${fmtPrice(symbol.dayLow)}–${fmtPrice(symbol.dayHigh)}`}
+            value={
+              snap
+                ? `${fmtPrice(snap.dayLow)}–${fmtPrice(snap.dayHigh)}`
+                : "—"
+            }
           />
         </div>
       </div>
