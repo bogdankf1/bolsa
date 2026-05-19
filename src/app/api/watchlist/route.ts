@@ -19,13 +19,13 @@ const SymbolSchema = z.object({
 });
 
 export const GET = withErrors(async () => {
-  return ok({ symbols: listWatchlist() });
+  return ok({ symbols: await listWatchlist() });
 });
 
 export const POST = withErrors(async (req: NextRequest) => {
   const body = await req.json();
   const { symbol } = SymbolSchema.parse(body);
-  const symbols = addToWatchlist(symbol);
+  const symbols = await addToWatchlist(symbol);
   return ok({ symbols });
 });
 
@@ -34,9 +34,9 @@ export const DELETE = withErrors(async (req: NextRequest) => {
   if (!sym) {
     const body = await req.json().catch(() => ({}));
     const { symbol } = SymbolSchema.parse(body);
-    const symbols = removeFromWatchlist(symbol);
+    const symbols = await removeFromWatchlist(symbol);
     return ok({ symbols });
   }
-  const symbols = removeFromWatchlist(sym);
+  const symbols = await removeFromWatchlist(sym);
   return ok({ symbols });
 });

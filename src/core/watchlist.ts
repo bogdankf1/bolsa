@@ -1,28 +1,50 @@
-// In-memory watchlist store. Process-scoped — fine for V1 single-user.
-// Will be replaced with Supabase persistence in a later step.
+// Supabase-backed watchlist. Single-user V1 — symbols persist across
+// Vercel function recycles. Seeds the default 5 on first read.
+
+import { supabase } from "@/lib/supabase";
 
 const DEFAULT_SYMBOLS = ["AAPL", "VOO", "QQQ", "SPY", "TSLA"];
 
-let symbols: string[] = [...DEFAULT_SYMBOLS];
+export async function listWatchlist(): Promise<string[]> {
+  const { data, error } = await supabase()
+    .from("watchlists")
+    .select("symbol")
+    .order("created_at", { ascending: true });
+  if (error) throw error;
 
-export function listWatchlist(): string[] {
-  return [...symbols];
+  if (data.length === 0) {
+    const { error: insertError } = await supabase()
+      .from("watchlists")
+      .insert(DEFAULT_SYMBOLS.map((symbol) => ({ symbol })));
+    if (insertError) throw insertError;
+    return [...DEFAULT_SYMBOLS];
+  }
+
+  return data.map((r) => r.symbol as string);
 }
 
-export function addToWatchlist(symbol: string): string[] {
+export async function addToWatchlist(symbol: string): Promise<string[]> {
   const s = symbol.trim().toUpperCase();
-  if (!s) return symbols;
-  if (!symbols.includes(s)) symbols = [...symbols, s];
-  return [...symbols];
+  if (!s) return listWatchlist();
+  const { error } = await supabase()
+    .from("watchlists")
+    .upsert({ symbol: s }, { onConflict: "symbol" });
+  if (error) throw error;
+  return listWatchlist();
 }
 
-export function removeFromWatchlist(symbol: string): string[] {
+export async function removeFromWatchlist(symbol: string): Promise<string[]> {
   const s = symbol.trim().toUpperCase();
-  symbols = symbols.filter((x) => x !== s);
-  return [...symbols];
+  const { error } = await supabase().from("watchlists").delete().eq("symbol", s);
+  if (error) throw error;
+  return listWatchlist();
 }
 
-export function resetWatchlist(): string[] {
-  symbols = [...DEFAULT_SYMBOLS];
-  return [...symbols];
+export async function resetWatchlist(): Promise<string[]> {
+  const { error: delError } = await supabase()
+    .from("watchlists")
+    .delete()
+    .neq("symbol", "");
+  if (delError) throw delError;
+  return listWatchlist();
 }
