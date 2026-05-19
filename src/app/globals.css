@@ -33,7 +33,8 @@ body {
   text-shadow: none;
 }
 
-/* Scanlines overlay */
+/* Scanlines overlay — promoted to its own GPU layer so the rest of the
+   page can repaint cheaply without re-rasterizing the scanline texture. */
 .crt-screen::before {
   content: "";
   position: fixed;
@@ -48,6 +49,8 @@ body {
     transparent 3px
   );
   mix-blend-mode: multiply;
+  will-change: transform;
+  transform: translateZ(0);
 }
 
 /* Vignette to fake CRT barrel curvature */
@@ -62,6 +65,8 @@ body {
     transparent 55%,
     rgba(0, 0, 0, 0.55) 100%
   );
+  will-change: transform;
+  transform: translateZ(0);
 }
 
 /* Boot-on animation */

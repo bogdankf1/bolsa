@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Panel } from "./Panel";
 import { fmtPct, fmtPrice } from "@/lib/format";
 import {
@@ -14,18 +14,25 @@ import {
 import { useHotkey } from "@/lib/hotkeys";
 import { registerFocusTarget } from "@/lib/focus";
 import { useAudio } from "@/lib/audio";
+import type { Snapshot } from "@/core/types";
 
 type Props = {
   selected: string | null;
   onSelect: (ticker: string) => void;
 };
 
+const EMPTY_SYMBOLS: string[] = [];
+
 export function Watchlist({ selected, onSelect }: Props) {
   const { data: wl } = useWatchlist();
-  const symbols = wl?.symbols ?? [];
-  const { data: snapData } = useSnapshots(symbols);
-  const snapshots = snapData?.snapshots ?? {};
+  // Stabilize the array reference so downstream hooks/memos don't churn
+  // every render when wl is undefined.
+  const symbols = wl?.symbols ?? EMPTY_SYMBOLS;
+
   const live = useQuoteStream(symbols);
+  const streamOpen = live.status === "open";
+  const { data: snapData } = useSnapshots(symbols, streamOpen);
+  const snapshots = snapData?.snapshots ?? {};
 
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -80,8 +87,14 @@ export function Watchlist({ selected, onSelect }: Props) {
   useHotkey("ArrowUp", moveUp);
   useHotkey("d", removeSelected);
 
-  // Beep when any watched symbol's price ticks
+  // Beep when any watched symbol's price ticks. Computes a single seq
+  // sum so the effect only fires when something actually changed.
   const tickSeqsRef = useRef<Record<string, number>>({});
+  const totalSeq = useMemo(() => {
+    let total = 0;
+    for (const sym of symbols) total += live.tickSeq[sym] ?? 0;
+    return total;
+  }, [live.tickSeq, symbols]);
   useEffect(() => {
     let changed = false;
     for (const sym of symbols) {
@@ -93,7 +106,8 @@ export function Watchlist({ selected, onSelect }: Props) {
       }
     }
     if (changed) play("tick");
-  }, [live.tickSeq, symbols, play]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [totalSeq]);
 
   async function handleAdd(sym: string) {
     if (!sym) return;
@@ -154,52 +168,17 @@ export function Watchlist({ selected, onSelect }: Props) {
         <span className="text-right">CHG%</span>
       </div>
       <ul className="divide-y divide-[var(--color-phosphor-faint)]">
-        {symbols.map((sym) => {
-          const s = snapshots[sym];
-          const isSel = sym === selected;
-          const up = s ? s.change >= 0 : true;
-          const tickDir = live.tickDir[sym];
-          const tickSeq = live.tickSeq[sym] ?? 0;
-          const tickCls =
-            tickDir === "up"
-              ? "tick-up"
-              : tickDir === "down"
-                ? "tick-down"
-                : "";
-          return (
-            <li
-              key={sym}
-              onClick={() => onSelect(sym)}
-              className={`grid cursor-pointer grid-cols-[2fr_3fr_2fr] gap-2 px-3 py-[6px] text-sm tabular-nums transition-colors ${
-                isSel
-                  ? "bg-[color-mix(in_srgb,var(--color-phosphor)_15%,transparent)] glow"
-                  : "hover:bg-[color-mix(in_srgb,var(--color-phosphor)_6%,transparent)]"
-              }`}
-            >
-              <span className="font-medium">
-                {isSel ? "▸ " : "  "}
-                {sym}
-              </span>
-              <span
-                key={`px-${tickSeq}`}
-                className={`text-right ${tickCls}`}
-              >
-                {s ? fmtPrice(s.lastPrice) : "—"}
-              </span>
-              <span
-                className={`text-right ${
-                  s == null
-                    ? "text-[var(--color-phosphor-dim)]"
-                    : up
-                      ? "text-[var(--color-gain)]"
-                      : "text-[var(--color-loss)] glow-loss"
-                }`}
-              >
-                {s ? fmtPct(s.changePct) : "—"}
-              </span>
-            </li>
-          );
-        })}
+        {symbols.map((sym) => (
+          <WatchlistRow
+            key={sym}
+            symbol={sym}
+            snapshot={snapshots[sym]}
+            tickDir={live.tickDir[sym] ?? null}
+            tickSeq={live.tickSeq[sym] ?? 0}
+            isSelected={sym === selected}
+            onSelect={onSelect}
+          />
+        ))}
         {symbols.length === 0 && wl && (
           <li className="px-3 py-4 text-center text-xs text-[var(--color-phosphor-dim)]">
             empty — add a symbol below
@@ -271,3 +250,73 @@ export function Watchlist({ selected, onSelect }: Props) {
     </Panel>
   );
 }
+
+// Row is memoized so a tick on AAPL doesn't re-render VOO, QQQ, SPY, TSLA.
+// React.memo's default shallow compare works because we pass primitives /
+// the snapshot reference, which only changes when that symbol's snapshot
+// actually updated.
+
+type RowProps = {
+  symbol: string;
+  snapshot: Snapshot | undefined;
+  tickDir: "up" | "down" | null;
+  tickSeq: number;
+  isSelected: boolean;
+  onSelect: (sym: string) => void;
+};
+
+const WatchlistRow = memo(function WatchlistRow({
+  symbol,
+  snapshot,
+  tickDir,
+  tickSeq,
+  isSelected,
+  onSelect,
+}: RowProps) {
+  const priceRef = useRef<HTMLSpanElement>(null);
+
+  // Imperatively retrigger the tick-up/tick-down CSS animation without
+  // remounting the node. Avoids creating a new DOM element on every tick.
+  useEffect(() => {
+    const el = priceRef.current;
+    if (!el || !tickDir || tickSeq === 0) return;
+    const cls = tickDir === "up" ? "tick-up" : "tick-down";
+    el.classList.remove("tick-up", "tick-down");
+    // Force reflow so the animation restarts on re-add
+    void el.offsetWidth;
+    el.classList.add(cls);
+  }, [tickSeq, tickDir]);
+
+  const s = snapshot;
+  const up = s ? s.change >= 0 : true;
+
+  return (
+    <li
+      onClick={() => onSelect(symbol)}
+      className={`grid cursor-pointer grid-cols-[2fr_3fr_2fr] gap-2 px-3 py-[6px] text-sm tabular-nums transition-colors ${
+        isSelected
+          ? "bg-[color-mix(in_srgb,var(--color-phosphor)_15%,transparent)] glow"
+          : "hover:bg-[color-mix(in_srgb,var(--color-phosphor)_6%,transparent)]"
+      }`}
+    >
+      <span className="font-medium">
+        {isSelected ? "▸ " : "  "}
+        {symbol}
+      </span>
+      <span ref={priceRef} className="text-right">
+        {s ? fmtPrice(s.lastPrice) : "—"}
+      </span>
+      <span
+        className={`text-right ${
+          s == null
+            ? "text-[var(--color-phosphor-dim)]"
+            : up
+              ? "text-[var(--color-gain)]"
+              : "text-[var(--color-loss)] glow-loss"
+        }`}
+      >
+        {s ? fmtPct(s.changePct) : "—"}
+      </span>
+    </li>
+  );
+});

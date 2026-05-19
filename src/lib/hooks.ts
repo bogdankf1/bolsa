@@ -17,13 +17,14 @@ import type {
   TradeTick,
 } from "@/core/types";
 
-// Polling intervals (ms). Snapshots get a tighter loop since quotes change fast.
+// Polling intervals (ms). SSE handles live ticks; polling is the fallback
+// for when the stream is closed, so snapshots can be loose.
 const POLL = {
-  account: 15_000,
-  portfolio: 15_000,
-  snapshots: 5_000,
-  orders: 10_000,
-  trades: 15_000,
+  account: 30_000,
+  portfolio: 30_000,
+  snapshots: 30_000,
+  orders: 15_000,
+  trades: 30_000,
   bars: 60_000,
 };
 
@@ -33,14 +34,15 @@ export function useWatchlist() {
   });
 }
 
-export function useSnapshots(symbols: string[]) {
+export function useSnapshots(symbols: string[], streamOpen = false) {
   const key =
     symbols.length === 0
       ? null
       : `/api/snapshots?symbols=${symbols.map(encodeURIComponent).join(",")}`;
   return useSWR<{ snapshots: Record<string, Snapshot> }>(key, fetcher, {
-    refreshInterval: POLL.snapshots,
-    revalidateOnFocus: true,
+    // When SSE is open, ticks keep data fresh; drop polling to save renders.
+    refreshInterval: streamOpen ? 0 : POLL.snapshots,
+    revalidateOnFocus: !streamOpen,
   });
 }
 
@@ -174,9 +176,13 @@ export type LiveTickState = {
 };
 
 /**
- * Subscribe to SSE quote/trade ticks for the given symbols. The hook also
- * mutates the corresponding /api/snapshots SWR cache so any component using
- * useSnapshots gets the live price without re-fetching.
+ * Subscribe to SSE quote/trade ticks for the given symbols. Ticks are
+ * coalesced per animation frame (RAF) so a burst of 50 ticks/sec collapses
+ * into ~60 setState calls/sec max — without this, market-hours bursts
+ * caused render storms that froze the page.
+ *
+ * The hook also mutates the corresponding /api/snapshots SWR cache so any
+ * component using useSnapshots gets the live price without re-fetching.
  */
 export function useQuoteStream(symbols: string[]): LiveTickState {
   const key = symbols.length === 0 ? "" : [...symbols].sort().join(",");
@@ -188,6 +194,11 @@ export function useQuoteStream(symbols: string[]): LiveTickState {
     tickSeq: {},
   });
   const lastPriceRef = useRef<Record<string, number>>({});
+  const pendingRef = useRef<{
+    bidAsk: Record<string, { bid: number; ask: number }>;
+    trades: Record<string, { price: number; count: number }>;
+  } | null>(null);
+  const rafRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!key) {
@@ -199,49 +210,102 @@ export function useQuoteStream(symbols: string[]): LiveTickState {
     const url = `/api/stream/quotes?symbols=${encodeURIComponent(key)}`;
     const es = new EventSource(url);
 
+    const flush = () => {
+      rafRef.current = null;
+      const pending = pendingRef.current;
+      pendingRef.current = null;
+      if (!pending) return;
+
+      // Tab hidden? Skip the React update — we'll catch up when visible.
+      // Still apply lastPriceRef so direction stays correct on resume.
+      const hidden =
+        typeof document !== "undefined" && document.visibilityState === "hidden";
+
+      const tradeEntries = Object.entries(pending.trades);
+      const dirUpdates: Record<string, "up" | "down" | null> = {};
+      const priceUpdates: Record<string, number> = {};
+      const seqIncrements: Record<string, number> = {};
+
+      for (const [sym, { price, count }] of tradeEntries) {
+        const prev = lastPriceRef.current[sym];
+        dirUpdates[sym] =
+          prev == null ? null : price > prev ? "up" : price < prev ? "down" : null;
+        lastPriceRef.current[sym] = price;
+        priceUpdates[sym] = price;
+        seqIncrements[sym] = count;
+      }
+
+      if (!hidden) {
+        setState((s) => {
+          const nextTickSeq = { ...s.tickSeq };
+          for (const [sym, inc] of Object.entries(seqIncrements)) {
+            nextTickSeq[sym] = (nextTickSeq[sym] ?? 0) + inc;
+          }
+          return {
+            ...s,
+            bidAsk: { ...s.bidAsk, ...pending.bidAsk },
+            lastPrices: { ...s.lastPrices, ...priceUpdates },
+            tickDir: { ...s.tickDir, ...dirUpdates },
+            tickSeq: nextTickSeq,
+          };
+        });
+
+        // Push into the snapshots cache once for all dirty symbols
+        for (const [sym, ba] of Object.entries(pending.bidAsk)) {
+          mutateSnapshotsForKey(key, (snap) => ({
+            ...snap,
+            bidPrice: ba.bid,
+            askPrice: ba.ask,
+          }), sym);
+        }
+        for (const [sym, price] of Object.entries(priceUpdates)) {
+          mutateSnapshotsForKey(key, (snap) => {
+            const change = price - snap.prevClose;
+            const changePct =
+              snap.prevClose === 0 ? 0 : (change / snap.prevClose) * 100;
+            return { ...snap, lastPrice: price, change, changePct };
+          }, sym);
+        }
+      }
+    };
+
+    const schedule = () => {
+      if (rafRef.current != null) return;
+      if (typeof requestAnimationFrame === "undefined") {
+        flush();
+        return;
+      }
+      rafRef.current = requestAnimationFrame(flush);
+    };
+
+    const ensurePending = () => {
+      if (!pendingRef.current) {
+        pendingRef.current = { bidAsk: {}, trades: {} };
+      }
+      return pendingRef.current;
+    };
+
     es.addEventListener("ready", () => {
       setState((s) => ({ ...s, status: "open" }));
     });
 
     es.addEventListener("quote", (ev) => {
       const tick = JSON.parse((ev as MessageEvent).data) as QuoteTick;
-      setState((s) => ({
-        ...s,
-        bidAsk: {
-          ...s.bidAsk,
-          [tick.symbol]: { bid: tick.bidPrice, ask: tick.askPrice },
-        },
-      }));
-      // Push into the snapshots cache too so non-stream consumers see it
-      mutateSnapshotsForKey(key, (snap) => ({
-        ...snap,
-        bidPrice: tick.bidPrice,
-        askPrice: tick.askPrice,
-      }), tick.symbol);
+      const p = ensurePending();
+      p.bidAsk[tick.symbol] = { bid: tick.bidPrice, ask: tick.askPrice };
+      schedule();
     });
 
     es.addEventListener("trade", (ev) => {
       const tick = JSON.parse((ev as MessageEvent).data) as TradeTick;
-      const prev = lastPriceRef.current[tick.symbol];
-      const dir: "up" | "down" | null =
-        prev == null ? null : tick.price > prev ? "up" : tick.price < prev ? "down" : null;
-      lastPriceRef.current[tick.symbol] = tick.price;
-
-      setState((s) => ({
-        ...s,
-        lastPrices: { ...s.lastPrices, [tick.symbol]: tick.price },
-        tickDir: { ...s.tickDir, [tick.symbol]: dir },
-        tickSeq: {
-          ...s.tickSeq,
-          [tick.symbol]: (s.tickSeq[tick.symbol] ?? 0) + 1,
-        },
-      }));
-
-      mutateSnapshotsForKey(key, (snap) => {
-        const change = tick.price - snap.prevClose;
-        const changePct = snap.prevClose === 0 ? 0 : (change / snap.prevClose) * 100;
-        return { ...snap, lastPrice: tick.price, change, changePct };
-      }, tick.symbol);
+      const p = ensurePending();
+      const existing = p.trades[tick.symbol];
+      // Last-write-wins for price; accumulate the tick count for animation seq
+      p.trades[tick.symbol] = {
+        price: tick.price,
+        count: (existing?.count ?? 0) + 1,
+      };
+      schedule();
     });
 
     es.addEventListener("error", () => {
@@ -249,6 +313,11 @@ export function useQuoteStream(symbols: string[]): LiveTickState {
     });
 
     return () => {
+      if (rafRef.current != null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      pendingRef.current = null;
       es.close();
       setState((s) => ({ ...s, status: "closed" }));
     };
