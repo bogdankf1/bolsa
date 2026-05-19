@@ -148,3 +148,10 @@ export type StreamEvent =
   | { type: "quote"; data: QuoteTick }
   | { type: "trade"; data: TradeTick }
   | { type: "status"; data: { connected: boolean; subscribed: string[] } };
+
+export interface Asset {
+  symbol: string;
+  name: string;
+  exchange: string;
+  tradable: boolean;
+}

@@ -5,6 +5,7 @@ import useSWR, { mutate } from "swr";
 import { fetcher, postJson } from "./fetcher";
 import type {
   Account,
+  Asset,
   Bar,
   Order,
   PortfolioSummary,
@@ -73,6 +74,16 @@ export function useOrders(status: "open" | "closed" | "all" = "all") {
 export function useTrades(limit = 50) {
   return useSWR<Order[]>(`/api/trades?limit=${limit}`, fetcher, {
     refreshInterval: POLL.trades,
+  });
+}
+
+export function useAssetSearch(query: string) {
+  const q = query.trim();
+  const key = q.length >= 1 ? `/api/assets?q=${encodeURIComponent(q)}` : null;
+  return useSWR<{ results: Asset[] }>(key, fetcher, {
+    keepPreviousData: true,
+    revalidateOnFocus: false,
+    dedupingInterval: 200,
   });
 }
 
