@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Panel } from "./Panel";
 import { fmtPct, fmtPrice } from "@/lib/format";
 import {
@@ -11,6 +11,9 @@ import {
   useSnapshots,
   useWatchlist,
 } from "@/lib/hooks";
+import { useHotkey } from "@/lib/hotkeys";
+import { registerFocusTarget } from "@/lib/focus";
+import { useAudio } from "@/lib/audio";
 
 type Props = {
   selected: string | null;
@@ -27,6 +30,7 @@ export function Watchlist({ selected, onSelect }: Props) {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [highlightIdx, setHighlightIdx] = useState(0);
+  const { play } = useAudio();
 
   const { data: searchData } = useAssetSearch(input);
   const matches = useMemo(() => {
@@ -40,30 +44,56 @@ export function Watchlist({ selected, onSelect }: Props) {
     setHighlightIdx(0);
   }, [input, matches.length]);
 
-  // Keyboard nav: j/k to move selection
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
+  const moveDown = useCallback(
+    (e: KeyboardEvent) => {
       if (symbols.length === 0) return;
       const idx = selected ? symbols.indexOf(selected) : -1;
-      if (e.key === "j" || e.key === "ArrowDown") {
-        e.preventDefault();
-        onSelect(symbols[(idx + 1 + symbols.length) % symbols.length]);
-      } else if (e.key === "k" || e.key === "ArrowUp") {
-        e.preventDefault();
-        onSelect(
-          symbols[(idx - 1 + symbols.length) % symbols.length],
-        );
-      } else if (e.key === "d" && selected) {
-        e.preventDefault();
-        void handleRemove(selected);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+      e.preventDefault();
+      onSelect(symbols[(idx + 1 + symbols.length) % symbols.length]);
+    },
+    [symbols, selected, onSelect],
+  );
+
+  const moveUp = useCallback(
+    (e: KeyboardEvent) => {
+      if (symbols.length === 0) return;
+      const idx = selected ? symbols.indexOf(selected) : -1;
+      e.preventDefault();
+      onSelect(symbols[(idx - 1 + symbols.length) % symbols.length]);
+    },
+    [symbols, selected, onSelect],
+  );
+
+  const removeSelected = useCallback(
+    (e: KeyboardEvent) => {
+      if (!selected) return;
+      e.preventDefault();
+      void handleRemove(selected);
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbols, selected]);
+    [selected],
+  );
+
+  useHotkey("j", moveDown);
+  useHotkey("ArrowDown", moveDown);
+  useHotkey("k", moveUp);
+  useHotkey("ArrowUp", moveUp);
+  useHotkey("d", removeSelected);
+
+  // Beep when any watched symbol's price ticks
+  const tickSeqsRef = useRef<Record<string, number>>({});
+  useEffect(() => {
+    let changed = false;
+    for (const sym of symbols) {
+      const next = live.tickSeq[sym] ?? 0;
+      const prev = tickSeqsRef.current[sym] ?? 0;
+      if (next > prev) {
+        tickSeqsRef.current[sym] = next;
+        changed = true;
+      }
+    }
+    if (changed) play("tick");
+  }, [live.tickSeq, symbols, play]);
 
   async function handleAdd(sym: string) {
     if (!sym) return;
@@ -186,11 +216,15 @@ export function Watchlist({ selected, onSelect }: Props) {
         >
           <span className="text-[var(--color-phosphor-dim)]">&gt;</span>
           <input
+            ref={(el) => registerFocusTarget("watchlist-input", el)}
             type="text"
             placeholder="ADD SYMBOL..."
             value={input}
             onChange={(e) => setInput(e.target.value.toUpperCase())}
-            onKeyDown={handleInputKey}
+            onKeyDown={(e) => {
+              play("keystroke");
+              handleInputKey(e);
+            }}
             disabled={busy}
             className="crt-input flex-1 border-none px-0 uppercase disabled:opacity-50"
           />
@@ -231,7 +265,7 @@ export function Watchlist({ selected, onSelect }: Props) {
         )}
 
         <p className="mt-1 text-[10px] text-[var(--color-phosphor-dim)]">
-          [j/k] nav · [d] delete · [↑↓] match · [Tab] complete · [Enter] add
+          [j/k] nav · [d] del · [/] focus · [:] cmd · [↑↓] match · [Tab] complete · [Enter] add
         </p>
       </div>
     </Panel>

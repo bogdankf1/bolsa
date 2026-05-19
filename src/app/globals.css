@@ -200,6 +200,31 @@ body {
   opacity: 0.7;
 }
 
+/* NORMAL MODE: suppresses CRT effects while keeping phosphor color */
+.normal-mode.crt-screen::before,
+.normal-mode.crt-screen::after {
+  display: none;
+}
+.normal-mode .crt-flicker,
+.normal-mode.crt-flicker {
+  animation: none;
+}
+.normal-mode .glow,
+.normal-mode .glow-strong,
+.normal-mode .glow-loss {
+  text-shadow: none;
+}
+.normal-mode .cursor-blink::after {
+  animation: none;
+}
+.normal-mode .tick-up,
+.normal-mode .tick-down {
+  animation: none;
+}
+.normal-mode {
+  text-shadow: none;
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar {
   width: 10px;

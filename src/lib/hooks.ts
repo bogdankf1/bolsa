@@ -146,6 +146,18 @@ export async function cancelOrder(id: string) {
   return res;
 }
 
+export async function resetAccount() {
+  const res = await postJson<{ positionsClosed: number; ordersCanceled: number }>(
+    "/api/account/reset",
+    {},
+  );
+  mutate((key) => typeof key === "string" && key.startsWith("/api/orders"));
+  mutate((key) => typeof key === "string" && key.startsWith("/api/trades"));
+  mutate("/api/portfolio");
+  mutate("/api/account");
+  return res;
+}
+
 // ----- Live ticks via SSE -----
 
 export type LiveTickState = {

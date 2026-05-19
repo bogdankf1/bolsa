@@ -39,6 +39,8 @@ export interface AlpacaClient {
     status?: "active" | "inactive";
     assetClass?: string;
   }): Promise<RawAsset[]>;
+  closeAllPositions(): Promise<RawClosedPosition[]>;
+  cancelAllOrders(): Promise<RawCanceledOrder[]>;
 }
 
 export function createAlpacaClient(config: AlpacaConfig): AlpacaClient {
@@ -150,6 +152,14 @@ export function createAlpacaClient(config: AlpacaConfig): AlpacaClient {
       qp.set("asset_class", params.assetClass ?? "us_equity");
       return trading<RawAsset[]>(`/assets?${qp.toString()}`);
     },
+
+    closeAllPositions: () =>
+      trading<RawClosedPosition[]>("/positions?cancel_orders=false", {
+        method: "DELETE",
+      }),
+
+    cancelAllOrders: () =>
+      trading<RawCanceledOrder[]>("/orders", { method: "DELETE" }),
   };
 }
 
@@ -289,4 +299,16 @@ export interface RawAsset {
   shortable: boolean;
   easy_to_borrow: boolean;
   fractionable: boolean;
+}
+
+export interface RawClosedPosition {
+  symbol: string;
+  status: number;
+  body?: unknown;
+}
+
+export interface RawCanceledOrder {
+  id: string;
+  status: number;
+  body?: unknown;
 }
