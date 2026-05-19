@@ -35,6 +35,10 @@ export interface AlpacaClient {
     symbol: string,
     params: { timeframe: string; limit?: number; start?: string; end?: string },
   ): Promise<RawBarsResponse>;
+  assets(params?: {
+    status?: "active" | "inactive";
+    assetClass?: string;
+  }): Promise<RawAsset[]>;
 }
 
 export function createAlpacaClient(config: AlpacaConfig): AlpacaClient {
@@ -138,6 +142,13 @@ export function createAlpacaClient(config: AlpacaConfig): AlpacaClient {
       return data<RawBarsResponse>(
         `/stocks/${encodeURIComponent(symbol)}/bars?${qp.toString()}`,
       );
+    },
+
+    assets: (params = {}) => {
+      const qp = new URLSearchParams();
+      qp.set("status", params.status ?? "active");
+      qp.set("asset_class", params.assetClass ?? "us_equity");
+      return trading<RawAsset[]>(`/assets?${qp.toString()}`);
     },
   };
 }
@@ -265,3 +276,17 @@ export interface RawSnapshot {
 }
 
 export type RawMultiSnapshotResponse = Record<string, RawSnapshot>;
+
+export interface RawAsset {
+  id: string;
+  class: string;
+  exchange: string;
+  symbol: string;
+  name: string;
+  status: string;
+  tradable: boolean;
+  marginable: boolean;
+  shortable: boolean;
+  easy_to_borrow: boolean;
+  fractionable: boolean;
+}

@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Panel } from "./Panel";
 import { fmtPct, fmtPrice } from "@/lib/format";
 import {
   addWatchlistSymbol,
   removeWatchlistSymbol,
+  useAssetSearch,
   useQuoteStream,
   useSnapshots,
   useWatchlist,
@@ -25,6 +26,19 @@ export function Watchlist({ selected, onSelect }: Props) {
 
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [highlightIdx, setHighlightIdx] = useState(0);
+
+  const { data: searchData } = useAssetSearch(input);
+  const matches = useMemo(() => {
+    const results = searchData?.results ?? [];
+    // Hide symbols already in the watchlist; show top 5.
+    return results.filter((a) => !symbols.includes(a.symbol)).slice(0, 5);
+  }, [searchData, symbols]);
+
+  // Reset highlight whenever the match list changes
+  useEffect(() => {
+    setHighlightIdx(0);
+  }, [input, matches.length]);
 
   // Keyboard nav: j/k to move selection
   useEffect(() => {
@@ -62,6 +76,28 @@ export function Watchlist({ selected, onSelect }: Props) {
       console.error("add symbol failed", e);
     } finally {
       setBusy(false);
+    }
+  }
+
+  function handleSubmit() {
+    if (matches.length > 0) {
+      handleAdd(matches[highlightIdx]?.symbol ?? matches[0].symbol);
+    } else {
+      handleAdd(input.trim().toUpperCase());
+    }
+  }
+
+  function handleInputKey(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (matches.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlightIdx((i) => (i + 1) % matches.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlightIdx((i) => (i - 1 + matches.length) % matches.length);
+    } else if (e.key === "Tab") {
+      e.preventDefault();
+      setInput(matches[highlightIdx]?.symbol ?? matches[0].symbol);
     }
   }
 
@@ -144,7 +180,7 @@ export function Watchlist({ selected, onSelect }: Props) {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            handleAdd(input.trim().toUpperCase());
+            handleSubmit();
           }}
           className="flex items-center gap-2 text-sm"
         >
@@ -154,13 +190,48 @@ export function Watchlist({ selected, onSelect }: Props) {
             placeholder="ADD SYMBOL..."
             value={input}
             onChange={(e) => setInput(e.target.value.toUpperCase())}
+            onKeyDown={handleInputKey}
             disabled={busy}
             className="crt-input flex-1 border-none px-0 uppercase disabled:opacity-50"
           />
           <span className="cursor-blink" />
         </form>
+
+        {input && matches.length > 0 && (
+          <ul className="mt-1 max-h-40 overflow-hidden border border-[var(--color-phosphor-dark)] text-xs">
+            {matches.map((m, i) => (
+              <li
+                key={m.symbol}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  handleAdd(m.symbol);
+                }}
+                onMouseEnter={() => setHighlightIdx(i)}
+                className={`grid cursor-pointer grid-cols-[auto_1fr_auto] gap-2 px-2 py-1 ${
+                  i === highlightIdx
+                    ? "bg-[color-mix(in_srgb,var(--color-phosphor)_15%,transparent)] glow"
+                    : "hover:bg-[color-mix(in_srgb,var(--color-phosphor)_6%,transparent)]"
+                }`}
+              >
+                <span className="font-medium">
+                  {i === highlightIdx ? "▸" : " "}
+                </span>
+                <span className="truncate">
+                  <span className="font-medium">{m.symbol}</span>
+                  <span className="ml-2 text-[var(--color-phosphor-dim)]">
+                    {m.name}
+                  </span>
+                </span>
+                <span className="text-[10px] text-[var(--color-phosphor-dim)]">
+                  {m.exchange}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+
         <p className="mt-1 text-[10px] text-[var(--color-phosphor-dim)]">
-          [j/k] nav · [d] delete · [Enter] add
+          [j/k] nav · [d] delete · [↑↓] match · [Tab] complete · [Enter] add
         </p>
       </div>
     </Panel>
