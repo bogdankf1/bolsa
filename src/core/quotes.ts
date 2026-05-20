@@ -110,7 +110,9 @@ export async function getSnapshots(
   return out;
 }
 
-// Map our internal timeframe label to Alpaca's
+// Map our internal timeframe label to Alpaca's.
+// The "1M" / "3M" / "1Y" labels are *windows*, not bar intervals — they all
+// use daily bars but with a tuned lookback and bar count for the chart panel.
 const ALPACA_TIMEFRAME: Record<Timeframe, string> = {
   "1Min": "1Min",
   "5Min": "5Min",
@@ -118,6 +120,9 @@ const ALPACA_TIMEFRAME: Record<Timeframe, string> = {
   "1H": "1Hour",
   "1D": "1Day",
   "1W": "1Week",
+  "1M": "1Day",
+  "3M": "1Day",
+  "1Y": "1Day",
 };
 
 // Recommended bar count per timeframe for the chart panel
@@ -128,6 +133,9 @@ export const DEFAULT_BAR_LIMIT: Record<Timeframe, number> = {
   "1H": 200,
   "1D": 180,
   "1W": 156,
+  "1M": 22,
+  "3M": 66,
+  "1Y": 252,
 };
 
 // Calendar-days window per timeframe, generous enough to cover the default limit
@@ -139,6 +147,9 @@ const LOOKBACK_DAYS: Record<Timeframe, number> = {
   "1H": 60,
   "1D": 365,
   "1W": 365 * 5,
+  "1M": 45,
+  "3M": 120,
+  "1Y": 400,
 };
 
 export async function getBars(

@@ -14,16 +14,23 @@ import {
 import { useHotkey } from "@/lib/hotkeys";
 import { registerFocusTarget } from "@/lib/focus";
 import { useAudio } from "@/lib/audio";
+import { useSetConnectionStatus } from "@/lib/connection";
 import type { Snapshot } from "@/core/types";
 
 type Props = {
   selected: string | null;
   onSelect: (ticker: string) => void;
+  active: boolean;
+  /**
+   * When true, suppress the inner Panel corner-bracket header. The parent
+   * (tab container in page.tsx) provides the visible header.
+   */
+  headless?: boolean;
 };
 
 const EMPTY_SYMBOLS: string[] = [];
 
-export function Watchlist({ selected, onSelect }: Props) {
+export function Watchlist({ selected, onSelect, active, headless }: Props) {
   const { data: wl } = useWatchlist();
   // Stabilize the array reference so downstream hooks/memos don't churn
   // every render when wl is undefined.
@@ -33,6 +40,12 @@ export function Watchlist({ selected, onSelect }: Props) {
   const streamOpen = live.status === "open";
   const { data: snapData } = useSnapshots(symbols, streamOpen);
   const snapshots = snapData?.snapshots ?? {};
+
+  // Surface the SSE connection status to the Header indicator.
+  const setConnStatus = useSetConnectionStatus();
+  useEffect(() => {
+    setConnStatus(live.status);
+  }, [live.status, setConnStatus]);
 
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -81,11 +94,11 @@ export function Watchlist({ selected, onSelect }: Props) {
     [selected],
   );
 
-  useHotkey("j", moveDown);
-  useHotkey("ArrowDown", moveDown);
-  useHotkey("k", moveUp);
-  useHotkey("ArrowUp", moveUp);
-  useHotkey("d", removeSelected);
+  useHotkey("j", moveDown, { enabled: active });
+  useHotkey("ArrowDown", moveDown, { enabled: active });
+  useHotkey("k", moveUp, { enabled: active });
+  useHotkey("ArrowUp", moveUp, { enabled: active });
+  useHotkey("d", removeSelected, { enabled: active });
 
   // Beep when any watched symbol's price ticks. Computes a single seq
   // sum so the effect only fires when something actually changed.
@@ -161,7 +174,11 @@ export function Watchlist({ selected, onSelect }: Props) {
   }
 
   return (
-    <Panel title="Watchlist" rightSlot={`${symbols.length} symbols`}>
+    <Panel
+      title={headless ? undefined : "Watchlist"}
+      rightSlot={headless ? undefined : `${symbols.length} symbols`}
+      className={headless ? "border-0" : ""}
+    >
       <div className="grid grid-cols-[2fr_3fr_2fr] gap-2 border-b border-[var(--color-phosphor-dark)] px-3 py-1 text-[10px] uppercase tracking-[0.12em] text-[var(--color-phosphor-dim)]">
         <span>SYM</span>
         <span className="text-right">LAST</span>

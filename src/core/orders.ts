@@ -41,12 +41,18 @@ export async function placeOrder(
   client: AlpacaClient,
   input: PlaceOrderInput,
 ): Promise<Order> {
+  // Limit/stop orders default to GTC so they persist across sessions until
+  // filled or canceled. "day" would silently cancel them at 4pm ET.
+  const isResting =
+    input.type === "limit" ||
+    input.type === "stop" ||
+    input.type === "stop_limit";
   const body = {
     symbol: input.symbol.toUpperCase(),
     qty: input.qty,
     side: input.side,
     type: input.type,
-    time_in_force: input.timeInForce ?? "day",
+    time_in_force: input.timeInForce ?? (isResting ? "gtc" : "day"),
     ...(input.limitPrice != null ? { limit_price: input.limitPrice } : {}),
     ...(input.stopPrice != null ? { stop_price: input.stopPrice } : {}),
   };

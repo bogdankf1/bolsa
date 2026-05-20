@@ -32,6 +32,22 @@ export async function getPortfolioSummary(
   const costBasis = positions.reduce((s, p) => s + p.costBasis, 0);
   const unrealizedPlPct = costBasis === 0 ? 0 : (unrealizedPl / costBasis) * 100;
 
+  // Today's P&L derived from each position's intraday % change. Alpaca's
+  // `change_today` is a decimal of price change today vs yesterday's close.
+  // Per-position $ delta: marketValue * pct / (1 + pct), summed across all
+  // positions. (Equivalent to current_price - prev_close, * qty.)
+  let dayPl = 0;
+  let prevMv = 0;
+  for (const p of positions) {
+    const pct = p.changeToday / 100;
+    const denom = 1 + pct;
+    if (denom === 0) continue;
+    const dPl = (p.marketValue * pct) / denom;
+    dayPl += dPl;
+    prevMv += p.marketValue - dPl;
+  }
+  const dayPlPct = prevMv === 0 ? 0 : (dayPl / prevMv) * 100;
+
   return {
     cash: account.cash,
     portfolioValue: account.portfolioValue,
@@ -39,6 +55,8 @@ export async function getPortfolioSummary(
     buyingPower: account.buyingPower,
     unrealizedPl,
     unrealizedPlPct,
+    dayPl,
+    dayPlPct,
     positionsCount: positions.length,
     positions,
   };

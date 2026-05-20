@@ -7,6 +7,7 @@ import type {
   Account,
   Asset,
   Bar,
+  MarketClock,
   Order,
   PortfolioSummary,
   Position,
@@ -26,6 +27,7 @@ const POLL = {
   orders: 15_000,
   trades: 30_000,
   bars: 60_000,
+  clock: 60_000,
 };
 
 export function useWatchlist() {
@@ -86,6 +88,13 @@ export function useAssetSearch(query: string) {
     keepPreviousData: true,
     revalidateOnFocus: false,
     dedupingInterval: 200,
+  });
+}
+
+export function useClock() {
+  return useSWR<MarketClock>("/api/clock", fetcher, {
+    refreshInterval: POLL.clock,
+    revalidateOnFocus: false,
   });
 }
 
@@ -210,6 +219,19 @@ export function useQuoteStream(symbols: string[]): LiveTickState {
     const url = `/api/stream/quotes?symbols=${encodeURIComponent(key)}`;
     const es = new EventSource(url);
 
+    // The SSE route is capped at 5 minutes (Vercel maxDuration). After that
+    // the connection closes and EventSource transparently reconnects — during
+    // the brief gap, `error` fires. Without a debounce, the header badge
+    // flips OFFLINE → CONNECTED every 5 min. We delay the OFFLINE flip so a
+    // quick reconnect cancels it; only sustained failures surface.
+    let errorTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearErrorTimer = () => {
+      if (errorTimer != null) {
+        clearTimeout(errorTimer);
+        errorTimer = null;
+      }
+    };
+
     const flush = () => {
       rafRef.current = null;
       const pending = pendingRef.current;
@@ -286,10 +308,16 @@ export function useQuoteStream(symbols: string[]): LiveTickState {
     };
 
     es.addEventListener("ready", () => {
+      clearErrorTimer();
       setState((s) => ({ ...s, status: "open" }));
     });
 
+    // Any inbound tick/quote also counts as proof the connection is alive,
+    // so cancel a pending OFFLINE flip if one's queued.
+    const cancelOnTick = () => clearErrorTimer();
+
     es.addEventListener("quote", (ev) => {
+      cancelOnTick();
       const tick = JSON.parse((ev as MessageEvent).data) as QuoteTick;
       const p = ensurePending();
       p.bidAsk[tick.symbol] = { bid: tick.bidPrice, ask: tick.askPrice };
@@ -297,6 +325,7 @@ export function useQuoteStream(symbols: string[]): LiveTickState {
     });
 
     es.addEventListener("trade", (ev) => {
+      cancelOnTick();
       const tick = JSON.parse((ev as MessageEvent).data) as TradeTick;
       const p = ensurePending();
       const existing = p.trades[tick.symbol];
@@ -309,10 +338,24 @@ export function useQuoteStream(symbols: string[]): LiveTickState {
     });
 
     es.addEventListener("error", () => {
-      setState((s) => ({ ...s, status: "error" }));
+      // readyState 0 = browser is auto-reconnecting; readyState 2 = closed
+      // for good. Only flip to OFFLINE if we don't recover within 5s.
+      if (errorTimer != null) return;
+      const isPermanent = es.readyState === 2;
+      errorTimer = setTimeout(
+        () => {
+          errorTimer = null;
+          setState((s) => ({
+            ...s,
+            status: isPermanent ? "closed" : "error",
+          }));
+        },
+        isPermanent ? 0 : 5_000,
+      );
     });
 
     return () => {
+      clearErrorTimer();
       if (rafRef.current != null) {
         cancelAnimationFrame(rafRef.current);
         rafRef.current = null;

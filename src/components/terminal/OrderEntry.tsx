@@ -3,12 +3,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { Panel } from "./Panel";
 import { fmtPrice, fmtUsd } from "@/lib/format";
-import { placeOrder, useSnapshots } from "@/lib/hooks";
+import { placeOrder, usePortfolio, useSnapshots } from "@/lib/hooks";
 import { useHotkey } from "@/lib/hotkeys";
 import { useAudio } from "@/lib/audio";
 
 type OrderType = "market" | "limit";
 type Side = "buy" | "sell";
+
+type Pending =
+  | { kind: "trade"; side: Side }
+  | { kind: "close"; side: Side; qty: number };
 
 type Props = { symbol: string | null };
 
@@ -16,7 +20,7 @@ export function OrderEntry({ symbol }: Props) {
   const [qty, setQty] = useState<number>(1);
   const [type, setType] = useState<OrderType>("market");
   const [limitPx, setLimitPx] = useState<number | null>(null);
-  const [pending, setPending] = useState<{ side: Side } | null>(null);
+  const [pending, setPending] = useState<Pending | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState<{
@@ -27,6 +31,26 @@ export function OrderEntry({ symbol }: Props) {
   const { play } = useAudio();
   const { data: snapData } = useSnapshots(symbol ? [symbol] : []);
   const snap = symbol ? snapData?.snapshots[symbol] : undefined;
+  const { data: portfolio } = usePortfolio();
+  const position = symbol
+    ? portfolio?.positions.find((p) => p.symbol === symbol)
+    : undefined;
+
+  // Clear stale per-symbol state when the focused ticker changes — otherwise
+  // a stale limit price or "order submitted" toast persists across symbols.
+  useEffect(() => {
+    setLimitPx(null);
+    setConfirmed(null);
+    setError(null);
+    setPending(null);
+  }, [symbol]);
+
+  // Auto-dismiss the success toast so it doesn't linger indefinitely.
+  useEffect(() => {
+    if (!confirmed) return;
+    const id = setTimeout(() => setConfirmed(null), 4000);
+    return () => clearTimeout(id);
+  }, [confirmed]);
 
   // Default limit price to current ask when snapshot first arrives
   useEffect(() => {
@@ -45,23 +69,41 @@ export function OrderEntry({ symbol }: Props) {
     if (!symbol) return;
     setError(null);
     setConfirmed(null);
-    setPending({ side });
+    setPending({ kind: "trade", side });
   }
 
-  async function confirm() {
+  function reviewClose() {
+    if (!position || !symbol) return;
+    setError(null);
+    setConfirmed(null);
+    setPending({
+      kind: "close",
+      side: position.side === "long" ? "sell" : "buy",
+      qty: Math.abs(position.qty),
+    });
+  }
+
+  const confirm = useCallback(async () => {
     if (!pending || !symbol) return;
     setSubmitting(true);
     setError(null);
     try {
-      const order = await placeOrder({
-        symbol,
-        qty,
-        side: pending.side,
-        type,
-        ...(type === "limit" && limitPx != null
-          ? { limitPrice: limitPx }
-          : {}),
-      });
+      const order = await (pending.kind === "close"
+        ? placeOrder({
+            symbol,
+            qty: pending.qty,
+            side: pending.side,
+            type: "market",
+          })
+        : placeOrder({
+            symbol,
+            qty,
+            side: pending.side,
+            type,
+            ...(type === "limit" && limitPx != null
+              ? { limitPrice: limitPx }
+              : {}),
+          }));
       setConfirmed({ side: pending.side, id: order.id });
       setPending(null);
       play("fill");
@@ -71,14 +113,13 @@ export function OrderEntry({ symbol }: Props) {
     } finally {
       setSubmitting(false);
     }
-  }
+  }, [pending, symbol, qty, type, limitPx, play]);
 
   function cancel() {
     setPending(null);
     setError(null);
   }
 
-  // Keyboard hotkeys via global dispatcher.
   const onBuy = useCallback(
     (e: KeyboardEvent) => {
       e.preventDefault();
@@ -100,25 +141,76 @@ export function OrderEntry({ symbol }: Props) {
       e.preventDefault();
       void confirm();
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [pending, symbol, qty, type, limitPx],
+    [confirm],
   );
   const onEscape = useCallback((e: KeyboardEvent) => {
     e.preventDefault();
     cancel();
   }, []);
+  const onClose = useCallback(
+    (e: KeyboardEvent) => {
+      if (!position) return;
+      e.preventDefault();
+      reviewClose();
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [position],
+  );
 
   useHotkey("b", onBuy, { enabled: !pending });
   useHotkey("s", onSell, { enabled: !pending });
   useHotkey("Enter", onEnter, { enabled: !!pending });
   useHotkey("Escape", onEscape, { enabled: !!pending });
+  useHotkey("x", onClose, { enabled: !pending && !!position });
+
+  // For trade confirm: project the qty change. For close confirm: target is 0.
+  const afterQty =
+    position && pending
+      ? pending.kind === "close"
+        ? 0
+        : pending.side === "buy"
+          ? position.qty + qty
+          : position.qty - qty
+      : qty;
+
+  const confirmTitle =
+    pending?.kind === "close" ? "Flatten Position" : "Confirm Order";
+
+  // For the confirm screen, normalize qty/type/price across both kinds.
+  const confirmQty = pending?.kind === "close" ? pending.qty : qty;
+  const confirmType: OrderType = pending?.kind === "close" ? "market" : type;
+  const confirmEstimate =
+    pending?.kind === "close"
+      ? (snap?.lastPrice ?? snap?.askPrice ?? 0) * pending.qty
+      : estimate;
 
   return (
-    <Panel title="Order Entry" rightSlot={symbol ?? "—"}>
+    <Panel
+      title="Order Entry"
+      rightSlot={
+        position ? (
+          <span className="text-[10px]">
+            POS{" "}
+            <span className="glow">{position.qty}</span>{" "}
+            <span className="text-[var(--color-phosphor-dim)]">
+              @ {fmtPrice(position.avgEntryPrice)}
+            </span>
+          </span>
+        ) : (
+          (symbol ?? "—")
+        )
+      }
+    >
       {pending ? (
         <div className="p-3 text-sm">
-          <div className="mb-2 text-[var(--color-phosphor-dim)] uppercase tracking-[0.15em] text-[11px]">
-            Confirm Order
+          <div
+            className={`mb-2 uppercase tracking-[0.15em] text-[11px] ${
+              pending.kind === "close"
+                ? "text-[var(--color-amber)] [text-shadow:0_0_4px_rgba(255,176,0,0.6)]"
+                : "text-[var(--color-phosphor-dim)]"
+            }`}
+          >
+            {confirmTitle}
           </div>
           <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-display text-base">
             <span className="text-[var(--color-phosphor-dim)] [text-shadow:none]">SIDE</span>
@@ -134,15 +226,30 @@ export function OrderEntry({ symbol }: Props) {
             <span className="text-[var(--color-phosphor-dim)] [text-shadow:none]">SYMBOL</span>
             <span className="glow">{symbol}</span>
             <span className="text-[var(--color-phosphor-dim)] [text-shadow:none]">QTY</span>
-            <span className="glow">{qty}</span>
+            <span className="glow">{confirmQty}</span>
+            {position && (
+              <>
+                <span className="text-[var(--color-phosphor-dim)] [text-shadow:none]">
+                  POSITION
+                </span>
+                <span className="glow">
+                  {position.qty} → {afterQty}
+                </span>
+              </>
+            )}
             <span className="text-[var(--color-phosphor-dim)] [text-shadow:none]">TYPE</span>
-            <span className="glow">{type.toUpperCase()}</span>
+            <span className="glow">
+              {confirmType.toUpperCase()}
+              <span className="ml-2 text-[10px] text-[var(--color-phosphor-dim)]">
+                {confirmType === "limit" ? "TIF: GTC" : "TIF: DAY"}
+              </span>
+            </span>
             <span className="text-[var(--color-phosphor-dim)] [text-shadow:none]">PRICE</span>
             <span className="glow">
-              {type === "market" ? "MKT" : fmtPrice(limitPx ?? 0)}
+              {confirmType === "market" ? "MKT" : fmtPrice(limitPx ?? 0)}
             </span>
             <span className="text-[var(--color-phosphor-dim)] [text-shadow:none]">EST. TOTAL</span>
-            <span className="glow-strong">{fmtUsd(estimate)}</span>
+            <span className="glow-strong">{fmtUsd(confirmEstimate)}</span>
           </div>
           {error && (
             <div className="mt-3 border border-[var(--color-loss)] px-2 py-1 text-xs text-[var(--color-loss)] glow-loss">
@@ -153,9 +260,17 @@ export function OrderEntry({ symbol }: Props) {
             <button
               onClick={confirm}
               disabled={submitting}
-              className="flex-1 border border-[var(--color-phosphor)] bg-[color-mix(in_srgb,var(--color-phosphor)_18%,transparent)] py-2 font-semibold tracking-[0.2em] glow hover:bg-[color-mix(in_srgb,var(--color-phosphor)_28%,transparent)] disabled:opacity-50"
+              className={`flex-1 border py-2 font-semibold tracking-[0.2em] disabled:opacity-50 ${
+                pending.kind === "close"
+                  ? "border-[var(--color-amber)] bg-[color-mix(in_srgb,var(--color-amber)_18%,transparent)] text-[var(--color-amber)] [text-shadow:0_0_4px_rgba(255,176,0,0.6)] hover:bg-[color-mix(in_srgb,var(--color-amber)_28%,transparent)]"
+                  : "border-[var(--color-phosphor)] bg-[color-mix(in_srgb,var(--color-phosphor)_18%,transparent)] glow hover:bg-[color-mix(in_srgb,var(--color-phosphor)_28%,transparent)]"
+              }`}
             >
-              {submitting ? "SUBMITTING…" : "[ENTER] CONFIRM"}
+              {submitting
+                ? "SUBMITTING…"
+                : pending.kind === "close"
+                  ? "[ENTER] FLATTEN"
+                  : "[ENTER] CONFIRM"}
             </button>
             <button
               onClick={cancel}
@@ -169,7 +284,7 @@ export function OrderEntry({ symbol }: Props) {
       ) : (
         <form
           onSubmit={(e) => e.preventDefault()}
-          className="grid grid-cols-[auto_1fr_auto_1fr_auto_1fr] items-center gap-x-2 gap-y-2 p-3 text-sm"
+          className="grid grid-cols-[auto_1fr_auto_1fr_auto_1fr] items-center gap-x-2 gap-y-1 p-2 text-sm"
         >
           <label className="text-[var(--color-phosphor-dim)] [text-shadow:none]">SYM</label>
           <input
@@ -211,9 +326,12 @@ export function OrderEntry({ symbol }: Props) {
             </>
           ) : null}
 
-          <div className="col-span-6 mt-1 flex items-center justify-between text-xs">
+          <div className="col-span-6 flex items-center justify-between text-[11px]">
             <span className="text-[var(--color-phosphor-dim)] [text-shadow:none]">
-              EST. TOTAL
+              EST. TOTAL{" "}
+              {type === "limit" && (
+                <span className="ml-1 text-[10px]">TIF: GTC</span>
+              )}
             </span>
             <span className="font-display text-base glow">
               {snap ? fmtUsd(estimate) : "—"}
@@ -221,22 +339,22 @@ export function OrderEntry({ symbol }: Props) {
           </div>
 
           {confirmed && (
-            <div className="col-span-6 mt-1 border border-[var(--color-phosphor)] px-2 py-1 text-xs glow">
+            <div className="col-span-6 border border-[var(--color-phosphor)] px-2 py-[2px] text-[11px] glow">
               ✓ {confirmed.side.toUpperCase()} order submitted ({confirmed.id.slice(0, 8)}…)
             </div>
           )}
           {error && !pending && (
-            <div className="col-span-6 mt-1 border border-[var(--color-loss)] px-2 py-1 text-xs text-[var(--color-loss)] glow-loss">
+            <div className="col-span-6 border border-[var(--color-loss)] px-2 py-[2px] text-[11px] text-[var(--color-loss)] glow-loss">
               ERROR: {error}
             </div>
           )}
 
-          <div className="col-span-6 mt-2 grid grid-cols-2 gap-2">
+          <div className="col-span-6 mt-1 grid grid-cols-3 gap-2">
             <button
               type="button"
               onClick={() => review("buy")}
               disabled={!symbol}
-              className="border border-[var(--color-phosphor)] bg-[color-mix(in_srgb,var(--color-phosphor)_10%,transparent)] py-2 font-semibold tracking-[0.2em] glow hover:bg-[color-mix(in_srgb,var(--color-phosphor)_22%,transparent)] disabled:opacity-30"
+              className="border border-[var(--color-phosphor)] bg-[color-mix(in_srgb,var(--color-phosphor)_10%,transparent)] py-1.5 font-semibold tracking-[0.2em] glow hover:bg-[color-mix(in_srgb,var(--color-phosphor)_22%,transparent)] disabled:opacity-30"
             >
               [B] BUY
             </button>
@@ -244,9 +362,18 @@ export function OrderEntry({ symbol }: Props) {
               type="button"
               onClick={() => review("sell")}
               disabled={!symbol}
-              className="border border-[var(--color-loss)] bg-[color-mix(in_srgb,var(--color-loss)_10%,transparent)] py-2 font-semibold tracking-[0.2em] text-[var(--color-loss)] glow-loss hover:bg-[color-mix(in_srgb,var(--color-loss)_22%,transparent)] disabled:opacity-30"
+              className="border border-[var(--color-loss)] bg-[color-mix(in_srgb,var(--color-loss)_10%,transparent)] py-1.5 font-semibold tracking-[0.2em] text-[var(--color-loss)] glow-loss hover:bg-[color-mix(in_srgb,var(--color-loss)_22%,transparent)] disabled:opacity-30"
             >
               [S] SELL
+            </button>
+            <button
+              type="button"
+              onClick={() => reviewClose()}
+              disabled={!position || submitting}
+              title={position ? "close entire position at market" : "no position to close"}
+              className="border border-[var(--color-amber)] py-1.5 tracking-[0.2em] text-[var(--color-amber)] [text-shadow:0_0_4px_rgba(255,176,0,0.6)] hover:bg-[color-mix(in_srgb,var(--color-amber)_15%,transparent)] disabled:opacity-30 disabled:[text-shadow:none]"
+            >
+              [X] CLOSE
             </button>
           </div>
         </form>

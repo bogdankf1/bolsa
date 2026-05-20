@@ -8,29 +8,41 @@ export function StatusBar() {
 
   const portfolioValue = data?.portfolioValue ?? 0;
   const cash = data?.cash ?? 0;
-  const buyingPower = data?.buyingPower ?? 0;
+  const dayPl = data?.dayPl ?? 0;
+  const dayPlPct = data?.dayPlPct ?? 0;
   const unrealizedPl = data?.unrealizedPl ?? 0;
   const unrealizedPlPct = data?.unrealizedPlPct ?? 0;
-  const up = unrealizedPl >= 0;
 
   return (
-    <div className="grid grid-cols-4 items-center gap-4 border-y border-[var(--color-phosphor-dark)] bg-[color-mix(in_srgb,var(--color-phosphor)_4%,transparent)] px-4 py-1.5 text-xs font-display">
+    <div className="grid grid-cols-5 items-center gap-4 border-y border-[var(--color-phosphor-dark)] bg-[color-mix(in_srgb,var(--color-phosphor)_4%,transparent)] px-4 py-1.5 text-xs font-display">
       <Cell
         label="PORTFOLIO"
         value={data ? fmtUsd(portfolioValue) : "—"}
         strong
       />
       <Cell
-        label="UNREALIZED P&L"
+        label="DAY P&L"
+        value={
+          data
+            ? `${fmtUsd(dayPl, { sign: true })} (${fmtPct(dayPlPct)})`
+            : "—"
+        }
+        accent={data && dayPl >= 0 ? "gain" : "loss"}
+      />
+      <Cell
+        label="UNREALIZED"
         value={
           data
             ? `${fmtUsd(unrealizedPl, { sign: true })} (${fmtPct(unrealizedPlPct)})`
             : "—"
         }
-        accent={up ? "gain" : "loss"}
+        accent={data && unrealizedPl >= 0 ? "gain" : "loss"}
       />
       <Cell label="CASH" value={data ? fmtUsd(cash) : "—"} />
-      <Cell label="BUYING POWER" value={data ? fmtUsd(buyingPower) : "—"} />
+      <Cell
+        label="POSITIONS"
+        value={data ? String(data.positionsCount) : "—"}
+      />
     </div>
   );
 }
@@ -49,9 +61,11 @@ function Cell({
   const cls =
     accent === "loss"
       ? "text-[var(--color-loss)] glow-loss"
-      : strong
-        ? "glow-strong"
-        : "glow";
+      : accent === "gain"
+        ? "text-[var(--color-gain)] glow"
+        : strong
+          ? "glow-strong"
+          : "glow";
   return (
     <div className="flex items-baseline gap-2">
       <span className="text-[10px] uppercase tracking-[0.15em] text-[var(--color-phosphor-dim)] [text-shadow:none]">

@@ -180,6 +180,17 @@ export function CommandPalette() {
             <div className="glow-loss mb-2 font-display text-base">
               CLOSE ALL POSITIONS AND CANCEL ALL ORDERS?
             </div>
+            <div className="mb-2 text-[11px] text-[var(--color-phosphor-dim)]">
+              cash reset to $100K must be done on the{" "}
+              <a
+                href={ALPACA_DASHBOARD_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="glow underline"
+              >
+                Alpaca dashboard ↗
+              </a>
+            </div>
             <div className="text-[var(--color-phosphor-dim)] text-xs">
               [y] confirm · [n] cancel
             </div>

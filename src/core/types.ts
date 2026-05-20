@@ -20,7 +20,27 @@ export type OrderStatus =
   | "pending_cancel"
   | "replaced";
 
-export type Timeframe = "1Min" | "5Min" | "15Min" | "1H" | "1D" | "1W";
+export type Timeframe =
+  | "1Min"
+  | "5Min"
+  | "15Min"
+  | "1H"
+  | "1D"
+  | "1W"
+  | "1M"
+  | "3M"
+  | "1Y";
+
+export interface MarketClock {
+  /** Current server timestamp. */
+  timestamp: string;
+  /** True when the regular session is open. */
+  isOpen: boolean;
+  /** ISO timestamp of the next market open. */
+  nextOpen: string;
+  /** ISO timestamp of the next market close. */
+  nextClose: string;
+}
 
 export interface Quote {
   symbol: string;
@@ -109,6 +129,10 @@ export interface PortfolioSummary {
   buyingPower: number;
   unrealizedPl: number;
   unrealizedPlPct: number;
+  /** Today's P&L across all positions (≈ sum of intraday gains/losses). */
+  dayPl: number;
+  /** Today's P&L as % of yesterday's market value. */
+  dayPlPct: number;
   positionsCount: number;
 }
 

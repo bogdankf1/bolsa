@@ -12,14 +12,8 @@ export interface ResetResult {
 
 export async function resetPaperAccount(): Promise<ResetResult> {
   const [closed, canceled] = await Promise.all([
-    alpaca.closeAllPositions().catch((e) => {
-      console.error("closeAllPositions failed", e);
-      return [] as Awaited<ReturnType<typeof alpaca.closeAllPositions>>;
-    }),
-    alpaca.cancelAllOrders().catch((e) => {
-      console.error("cancelAllOrders failed", e);
-      return [] as Awaited<ReturnType<typeof alpaca.cancelAllOrders>>;
-    }),
+    alpaca.closeAllPositions(),
+    alpaca.cancelAllOrders(),
   ]);
 
   return {

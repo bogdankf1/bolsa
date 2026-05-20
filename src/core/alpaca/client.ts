@@ -41,6 +41,7 @@ export interface AlpacaClient {
   }): Promise<RawAsset[]>;
   closeAllPositions(): Promise<RawClosedPosition[]>;
   cancelAllOrders(): Promise<RawCanceledOrder[]>;
+  clock(): Promise<RawClock>;
 }
 
 export function createAlpacaClient(config: AlpacaConfig): AlpacaClient {
@@ -160,6 +161,8 @@ export function createAlpacaClient(config: AlpacaConfig): AlpacaClient {
 
     cancelAllOrders: () =>
       trading<RawCanceledOrder[]>("/orders", { method: "DELETE" }),
+
+    clock: () => trading<RawClock>("/clock"),
   };
 }
 
@@ -311,4 +314,11 @@ export interface RawCanceledOrder {
   id: string;
   status: number;
   body?: unknown;
+}
+
+export interface RawClock {
+  timestamp: string;
+  is_open: boolean;
+  next_open: string;
+  next_close: string;
 }

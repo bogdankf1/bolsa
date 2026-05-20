@@ -2,10 +2,103 @@
 
 import { useEffect, useState } from "react";
 import { useSettings } from "@/lib/settings";
+import { useConnectionStatus } from "@/lib/connection";
+import { useClock } from "@/lib/hooks";
+
+function fmtLocal(iso: string): string {
+  try {
+    const d = new Date(iso);
+    const time = d.toLocaleTimeString("en-US", {
+      hour12: false,
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    const tz =
+      new Intl.DateTimeFormat("en-US", { timeZoneName: "short" })
+        .formatToParts(d)
+        .find((p) => p.type === "timeZoneName")?.value ?? "";
+    return tz ? `${time} ${tz}` : time;
+  } catch {
+    return "--:--";
+  }
+}
+
+type Badge = {
+  label: string;
+  border: string;
+  text: string;
+  dot: string;
+  pulse: boolean;
+};
+
+function badgeFor(status: ReturnType<typeof useConnectionStatus>): Badge {
+  switch (status) {
+    case "open":
+      return {
+        label: "CONNECTED",
+        border: "var(--color-phosphor)",
+        text: "var(--color-phosphor)",
+        dot: "var(--color-phosphor)",
+        pulse: true,
+      };
+    case "connecting":
+      return {
+        label: "CONNECTING",
+        border: "var(--color-amber)",
+        text: "var(--color-amber)",
+        dot: "var(--color-amber)",
+        pulse: true,
+      };
+    case "error":
+      return {
+        label: "OFFLINE",
+        border: "var(--color-loss)",
+        text: "var(--color-loss)",
+        dot: "var(--color-loss)",
+        pulse: false,
+      };
+    case "closed":
+      return {
+        label: "DISCONNECTED",
+        border: "var(--color-phosphor-dark)",
+        text: "var(--color-phosphor-dim)",
+        dot: "var(--color-phosphor-dim)",
+        pulse: false,
+      };
+    case "idle":
+    default:
+      return {
+        label: "IDLE",
+        border: "var(--color-phosphor-dark)",
+        text: "var(--color-phosphor-dim)",
+        dot: "var(--color-phosphor-dim)",
+        pulse: false,
+      };
+  }
+}
 
 export function Header() {
   const [now, setNow] = useState<string>("");
   const { settings, toggleNormalMode, toggleAudioMuted } = useSettings();
+  const connStatus = useConnectionStatus();
+  const badge = badgeFor(connStatus);
+  const { data: clock } = useClock();
+
+  const mkt = clock
+    ? clock.isOpen
+      ? {
+          label: `MKT OPEN · CLOSES ${fmtLocal(clock.nextClose)}`,
+          border: "var(--color-phosphor)",
+          text: "var(--color-phosphor)",
+          glow: true,
+        }
+      : {
+          label: `MKT CLOSED · OPENS ${fmtLocal(clock.nextOpen)}`,
+          border: "var(--color-phosphor-dark)",
+          text: "var(--color-phosphor-dim)",
+          glow: false,
+        }
+    : null;
 
   useEffect(() => {
     const tick = () => {
@@ -37,10 +130,12 @@ export function Header() {
         <span className="font-display text-base tabular-nums text-[var(--color-phosphor-dim)]">
           {now || "----.--.-- --:--:--"}
         </span>
+        {/* Always-visible toggles. Label flips to reflect current state so
+            clicking gives immediate feedback (CRT ↔ NRM, MUTE ↔ SND). */}
         <button
           type="button"
           onClick={toggleNormalMode}
-          title={settings.normalMode ? "switch to CRT mode" : "switch to NORMAL mode"}
+          title={settings.normalMode ? "switch to CRT mode" : "dial down CRT effects"}
           className={`border px-2 py-[2px] tracking-[0.15em] ${
             settings.normalMode
               ? "border-[var(--color-phosphor)] glow"
@@ -61,12 +156,47 @@ export function Header() {
         >
           {settings.audioMuted ? "MUTE" : "SND"}
         </button>
+        {mkt && (
+          <span
+            className="border px-2 py-[2px]"
+            style={{
+              borderColor: mkt.border,
+              color: mkt.text,
+              textShadow: mkt.glow ? "0 0 4px var(--color-phosphor)" : "none",
+            }}
+          >
+            {mkt.label}
+          </span>
+        )}
         <span className="border border-[var(--color-amber)] px-2 py-[2px] text-[var(--color-amber)] [text-shadow:0_0_4px_rgba(255,176,0,0.6)]">
           PAPER
         </span>
-        <span className="flex items-center gap-1 border border-[var(--color-phosphor)] px-2 py-[2px] glow">
-          <span className="inline-block size-2 animate-pulse rounded-full bg-[var(--color-phosphor)] [box-shadow:0_0_6px_var(--color-phosphor)]" />
-          CONNECTED
+        <span
+          className="flex items-center gap-1 border px-2 py-[2px]"
+          style={{
+            borderColor: badge.border,
+            color: badge.text,
+            textShadow:
+              connStatus === "open"
+                ? "0 0 4px var(--color-phosphor)"
+                : connStatus === "connecting"
+                  ? "0 0 4px rgba(255,176,0,0.6)"
+                  : connStatus === "error"
+                    ? "0 0 4px rgba(255,51,51,0.6)"
+                    : "none",
+          }}
+          title={`SSE stream: ${connStatus}`}
+        >
+          <span
+            className={`inline-block size-2 rounded-full ${
+              badge.pulse ? "animate-pulse" : ""
+            }`}
+            style={{
+              backgroundColor: badge.dot,
+              boxShadow: badge.pulse ? `0 0 6px ${badge.dot}` : undefined,
+            }}
+          />
+          {badge.label}
         </span>
       </div>
     </header>
