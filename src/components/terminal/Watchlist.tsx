@@ -102,7 +102,14 @@ export function Watchlist({ selected, onSelect, active, headless }: Props) {
 
   // Beep when any watched symbol's price ticks. Computes a single seq
   // sum so the effect only fires when something actually changed.
+  //
+  // Liquid tickers (AAPL/NVDA/SPY/…) tick many times per second during
+  // open market, which makes the beep feel like a metronome. We
+  // throttle to at most one play per ~1.2 s — still conveys "market is
+  // alive" without being a constant heartbeat.
+  const TICK_MIN_INTERVAL_MS = 1200;
   const tickSeqsRef = useRef<Record<string, number>>({});
+  const lastTickAtRef = useRef(0);
   const totalSeq = useMemo(() => {
     let total = 0;
     for (const sym of symbols) total += live.tickSeq[sym] ?? 0;
@@ -118,7 +125,11 @@ export function Watchlist({ selected, onSelect, active, headless }: Props) {
         changed = true;
       }
     }
-    if (changed) play("tick");
+    if (!changed) return;
+    const now = Date.now();
+    if (now - lastTickAtRef.current < TICK_MIN_INTERVAL_MS) return;
+    lastTickAtRef.current = now;
+    play("tick");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalSeq]);
 

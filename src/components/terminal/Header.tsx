@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useSettings } from "@/lib/settings";
 import { useConnectionStatus } from "@/lib/connection";
-import { useClock } from "@/lib/hooks";
+import { useAgentState, useClock } from "@/lib/hooks";
 
 function fmtLocal(iso: string): string {
   try {
@@ -83,6 +83,7 @@ export function Header() {
   const connStatus = useConnectionStatus();
   const badge = badgeFor(connStatus);
   const { data: clock } = useClock();
+  const { state: agentState } = useAgentState();
 
   const mkt = clock
     ? clock.isOpen
@@ -156,6 +157,18 @@ export function Header() {
         >
           {settings.audioMuted ? "MUTE" : "SND"}
         </button>
+        {agentState.activeSessionId && (
+          <span
+            className="flex items-center gap-1 border border-[var(--color-amber)] px-2 py-[2px] text-[var(--color-amber)] [text-shadow:0_0_4px_rgba(255,176,0,0.6)]"
+            title={`agent: ${agentState.activeSessionId}`}
+          >
+            <span
+              className="inline-block size-2 animate-pulse rounded-full bg-[var(--color-amber)] [box-shadow:0_0_6px_var(--color-amber)]"
+              aria-hidden
+            />
+            AGENT ACTIVE
+          </span>
+        )}
         {mkt && (
           <span
             className="border px-2 py-[2px]"

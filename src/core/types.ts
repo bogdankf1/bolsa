@@ -179,3 +179,27 @@ export interface Asset {
   exchange: string;
   tradable: boolean;
 }
+
+// --------- Agent activity (V2) ---------
+
+export type EventKind =
+  | "thought"
+  | "tool_call"
+  | "tool_result"
+  | "error"
+  | "session_start"
+  | "session_end";
+
+export interface AgentState {
+  shouldStop: boolean;
+  activeSessionId: string | null;
+}
+
+export interface AgentEvent {
+  id: string;
+  created_at: string;
+  session_id: string;
+  kind: EventKind;
+  tool: string | null;
+  data: Record<string, unknown>;
+}

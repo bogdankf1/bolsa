@@ -3,8 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import useSWR, { mutate } from "swr";
 import { fetcher, postJson } from "./fetcher";
+import { supabaseBrowser } from "./supabase-client";
 import type {
   Account,
+  AgentEvent,
+  AgentState,
   Asset,
   Bar,
   MarketClock,
@@ -393,4 +396,190 @@ function mutateSnapshotsForKey(
     },
     { revalidate: false },
   );
+}
+
+// ----- Agent spectator state & events (V2) -----
+
+interface AgentStateRow {
+  id: number;
+  should_stop: boolean;
+  active_session_id: string | null;
+  updated_at: string;
+}
+
+function rowToState(row: AgentStateRow | null | undefined): AgentState {
+  if (!row) return { shouldStop: false, activeSessionId: null };
+  return {
+    shouldStop: !!row.should_stop,
+    activeSessionId: row.active_session_id ?? null,
+  };
+}
+
+// Realtime channels in supabase-js dedupe by name, which means two
+// `useAgentState()` calls registering "agent_state_changes" collide —
+// the second `.on()` lands after the first's `.subscribe()` and throws.
+// Unique channel names per hook instance avoid this entirely.
+function uniqueChannelName(prefix: string): string {
+  return `${prefix}_${Math.random().toString(36).slice(2, 10)}_${Date.now()}`;
+}
+
+/**
+ * Subscribes to the singleton `agent_state` row. Returns current state
+ * (whether an agent is running and whether the kill switch is set) and
+ * a `stop` function that POSTs to /api/agent/stop.
+ */
+export function useAgentState() {
+  const [state, setState] = useState<AgentState>({
+    shouldStop: false,
+    activeSessionId: null,
+  });
+  const [ready, setReady] = useState(false);
+  const channelNameRef = useRef<string>("");
+  if (!channelNameRef.current) {
+    channelNameRef.current = uniqueChannelName("agent_state");
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    const supa = supabaseBrowser();
+
+    void (async () => {
+      const { data } = await supa
+        .from("agent_state")
+        .select("id, should_stop, active_session_id, updated_at")
+        .eq("id", 1)
+        .maybeSingle();
+      if (cancelled) return;
+      setState(rowToState(data as AgentStateRow | null));
+      setReady(true);
+    })();
+
+    const channel = supa
+      .channel(channelNameRef.current)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "agent_state",
+          filter: "id=eq.1",
+        },
+        (payload) => {
+          const row = (payload.new ?? payload.old) as
+            | AgentStateRow
+            | null
+            | undefined;
+          setState(rowToState(row));
+        },
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      void supa.removeChannel(channel);
+    };
+  }, []);
+
+  const stop = async () => {
+    await postJson("/api/agent/stop", {});
+  };
+
+  return { state, ready, stop };
+}
+
+/**
+ * Subscribes to `agent_events` rows for the given session. Returns events
+ * in chronological order (oldest first); the UI is free to reverse them
+ * for display. Passing `null` returns an empty list and skips the
+ * subscription — useful when no agent is active.
+ */
+export function useAgentEvents(sessionId: string | null) {
+  const [events, setEvents] = useState<AgentEvent[]>([]);
+  const channelNameRef = useRef<string>("");
+  if (!channelNameRef.current) {
+    channelNameRef.current = uniqueChannelName("agent_events");
+  }
+
+  useEffect(() => {
+    if (!sessionId) {
+      setEvents([]);
+      return;
+    }
+    let cancelled = false;
+    const supa = supabaseBrowser();
+
+    void (async () => {
+      const { data } = await supa
+        .from("agent_events")
+        .select("*")
+        .eq("session_id", sessionId)
+        .order("created_at", { ascending: true })
+        .limit(500);
+      if (cancelled) return;
+      setEvents((data ?? []) as AgentEvent[]);
+    })();
+
+    const channel = supa
+      .channel(channelNameRef.current)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "agent_events",
+          filter: `session_id=eq.${sessionId}`,
+        },
+        (payload) => {
+          const ev = payload.new as AgentEvent;
+          setEvents((prev) => {
+            // Guard against duplicates if the initial fetch races the
+            // subscription on a fast session start.
+            if (prev.some((p) => p.id === ev.id)) return prev;
+            return [...prev, ev];
+          });
+          // When the agent finishes a state-changing tool call, force
+          // the rest of the UI to refresh immediately instead of
+          // waiting on its 15–30 s SWR poll. That's why the trade log,
+          // positions, and chart all light up live alongside the
+          // Agent tab.
+          if (ev.kind === "tool_result" && ev.tool) {
+            invalidateForTool(ev.tool);
+          }
+        },
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      void supa.removeChannel(channel);
+    };
+  }, [sessionId]);
+
+  return events;
+}
+
+// Map each state-changing MCP tool to the SWR keys whose data it
+// invalidates. Read-only tools (get_quote, get_clock, …) are absent —
+// they don't change anything the UI shows.
+function invalidateForTool(tool: string): void {
+  const orders = (k: unknown) =>
+    typeof k === "string" && k.startsWith("/api/orders");
+  const trades = (k: unknown) =>
+    typeof k === "string" && k.startsWith("/api/trades");
+  const watchlist = (k: unknown) =>
+    typeof k === "string" && k === "/api/watchlist";
+
+  switch (tool) {
+    case "place_order":
+    case "cancel_order":
+      mutate(orders);
+      mutate(trades);
+      mutate("/api/portfolio");
+      mutate("/api/account");
+      return;
+    case "add_to_watchlist":
+    case "remove_from_watchlist":
+      mutate(watchlist);
+      return;
+  }
 }
