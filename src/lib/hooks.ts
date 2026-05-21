@@ -72,15 +72,62 @@ export function usePortfolio() {
   );
 }
 
-export function useOrders(status: "open" | "closed" | "all" = "all") {
-  return useSWR<Order[]>(`/api/orders?status=${status}&limit=50`, fetcher, {
-    refreshInterval: POLL.orders,
-  });
+export function useOrders(status: "open" | "closed" | "all" = "all", limit = 50) {
+  return useSWR<Order[]>(
+    `/api/orders?status=${status}&limit=${limit}`,
+    fetcher,
+    { refreshInterval: POLL.orders },
+  );
 }
 
 export function useTrades(limit = 50) {
   return useSWR<Order[]>(`/api/trades?limit=${limit}`, fetcher, {
     refreshInterval: POLL.trades,
+  });
+}
+
+export interface AgentSessionSummary {
+  sessionId: string;
+  startedAt: string;
+  endedAt: string | null;
+}
+
+export function useAgentSessions() {
+  return useSWR<AgentSessionSummary[]>(
+    "/api/agent/sessions",
+    fetcher,
+    { refreshInterval: 30_000 },
+  );
+}
+
+export interface BacktestRunSummary {
+  id: string;
+  sessionId: string | null;
+  symbol: string;
+  timeframe: string;
+  rangeStart: string;
+  rangeEnd: string;
+  initialCash: number;
+  finalEquity: number | null;
+  realizedPnl: number | null;
+  tradeCount: number;
+  buyCount: number;
+  sellCount: number;
+  closedCount: number;
+  winCount: number;
+  lossCount: number;
+  winRate: number | null;
+  maxDrawdown: number | null;
+  sharpe: number | null;
+  barCount: number;
+  status: "running" | "completed" | "aborted";
+  createdAt: string;
+  endedAt: string | null;
+}
+
+export function useBacktestRuns() {
+  return useSWR<BacktestRunSummary[]>("/api/backtest/runs", fetcher, {
+    refreshInterval: 10_000,
   });
 }
 
@@ -101,14 +148,25 @@ export function useClock() {
   });
 }
 
-export function useBars(symbol: string | null, timeframe: Timeframe) {
-  const key = symbol
-    ? `/api/bars/${encodeURIComponent(symbol)}?timeframe=${timeframe}`
-    : null;
+export function useBars(
+  symbol: string | null,
+  timeframe: Timeframe,
+  opts: { start?: string; end?: string } = {},
+) {
+  let key: string | null = null;
+  if (symbol) {
+    const params = new URLSearchParams({ timeframe });
+    if (opts.start) params.set("start", opts.start);
+    if (opts.end) params.set("end", opts.end);
+    key = `/api/bars/${encodeURIComponent(symbol)}?${params.toString()}`;
+  }
   return useSWR<{ symbol: string; timeframe: Timeframe; bars: Bar[] }>(
     key,
     fetcher,
-    { refreshInterval: POLL.bars },
+    {
+      // Historical range queries are immutable; skip polling for them.
+      refreshInterval: opts.start || opts.end ? 0 : POLL.bars,
+    },
   );
 }
 

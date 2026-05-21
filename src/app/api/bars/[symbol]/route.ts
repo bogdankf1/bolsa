@@ -7,7 +7,17 @@ import type { Timeframe } from "@/core/types";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const VALID_TF: Timeframe[] = ["1Min", "5Min", "15Min", "1H", "1D", "1W"];
+const VALID_TF: Timeframe[] = [
+  "1Min",
+  "5Min",
+  "15Min",
+  "1H",
+  "1D",
+  "1W",
+  "1M",
+  "3M",
+  "1Y",
+];
 
 export const GET = withErrors(
   async (req: NextRequest, ctx: { params: Promise<{ symbol: string }> }) => {
@@ -18,9 +28,15 @@ export const GET = withErrors(
       : "1D";
     const limitParam = req.nextUrl.searchParams.get("limit");
     const limit = limitParam
-      ? Math.min(1000, Math.max(1, Number(limitParam)))
+      ? Math.min(10_000, Math.max(1, Number(limitParam)))
       : undefined;
-    const bars = await getBars(alpaca, symbol.toUpperCase(), timeframe, limit);
+    const start = req.nextUrl.searchParams.get("start") || undefined;
+    const end = req.nextUrl.searchParams.get("end") || undefined;
+    const bars = await getBars(alpaca, symbol.toUpperCase(), timeframe, {
+      limit,
+      start,
+      end,
+    });
     return ok({ symbol: symbol.toUpperCase(), timeframe, bars });
   },
 );

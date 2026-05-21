@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useSettings } from "@/lib/settings";
 import { useConnectionStatus } from "@/lib/connection";
 import { useAgentState, useClock } from "@/lib/hooks";
+import { useChoreography } from "@/lib/choreography";
 
 function fmtLocal(iso: string): string {
   try {
@@ -84,6 +85,7 @@ export function Header() {
   const badge = badgeFor(connStatus);
   const { data: clock } = useClock();
   const { state: agentState } = useAgentState();
+  const { latestThought, enabled: focusOn } = useChoreography();
 
   const mkt = clock
     ? clock.isOpen
@@ -119,8 +121,16 @@ export function Header() {
     return () => clearInterval(id);
   }, []);
 
+  const sessionId = agentState.activeSessionId;
+  const showActionLine = !!sessionId;
+  // Thought wins; absent it we show the session name so the strip is never
+  // blank during an active session. focus=off greys the strip out — the
+  // agent is still streaming, the operator just opted out of choreography.
+  const actionText = latestThought ?? (sessionId ? `session: ${sessionId}` : "");
+
   return (
-    <header className="flex items-center justify-between border-b border-[var(--color-phosphor-dark)] bg-[color-mix(in_srgb,var(--color-phosphor)_4%,transparent)] px-4 py-2 text-sm">
+    <header className="border-b border-[var(--color-phosphor-dark)] bg-[color-mix(in_srgb,var(--color-phosphor)_4%,transparent)]">
+      <div className="flex items-center justify-between px-4 py-2 text-sm">
       <div className="flex items-center gap-4">
         <span className="glow-strong font-semibold tracking-[0.2em]">
           BOLSA TERMINAL
@@ -212,6 +222,28 @@ export function Header() {
           {badge.label}
         </span>
       </div>
+      </div>
+      {showActionLine && (
+        <div
+          className={`flex items-center gap-2 border-t border-[var(--color-phosphor-faint)] px-4 py-[2px] text-[11px] tabular-nums ${
+            focusOn
+              ? "text-[var(--color-amber)] [text-shadow:0_0_3px_rgba(255,176,0,0.4)]"
+              : "text-[var(--color-phosphor-dim)]"
+          }`}
+        >
+          <span className="shrink-0 opacity-70">
+            {latestThought ? "›" : "—"}
+          </span>
+          <span className="truncate" title={actionText}>
+            {actionText}
+          </span>
+          {!focusOn && (
+            <span className="ml-auto shrink-0 text-[10px] uppercase tracking-[0.18em] opacity-70">
+              focus off
+            </span>
+          )}
+        </div>
+      )}
     </header>
   );
 }

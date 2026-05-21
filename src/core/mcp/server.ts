@@ -10,10 +10,15 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { alpaca } from "@/lib/server";
-import { getAccount } from "@/core/account";
-import { getPortfolioSummary, getPositions } from "@/core/portfolio";
-import { cancelOrder, listOrders, placeOrder } from "@/core/orders";
-import { getRecentTrades } from "@/core/trades";
+import {
+  routedAccount,
+  routedCancelOrder,
+  routedListOrders,
+  routedPlaceOrder,
+  routedPortfolio,
+  routedPositions,
+  routedRecentTrades,
+} from "@/core/execution-context";
 import {
   getBars,
   getLatestQuote,
@@ -34,6 +39,13 @@ import {
   shouldStop,
   withAudit,
 } from "@/core/agent-events";
+import {
+  advanceBar,
+  endBacktest,
+  getBacktestContext,
+  isBacktestActive,
+  startBacktest,
+} from "@/core/backtest-engine";
 
 // Wrap any JSON-serialisable value in the MCP "text" content shape.
 function asText(value: unknown) {
@@ -227,7 +239,7 @@ export function buildBolsaMcpServer(): McpServer {
         "buying power, day-trade count, and status. Use this to inspect " +
         "available capital before placing orders.",
     },
-    withAudit("get_account", async () => asText(await getAccount(alpaca))),
+    withAudit("get_account", async () => asText(await routedAccount(alpaca))),
   );
 
   server.registerTool(
@@ -239,7 +251,7 @@ export function buildBolsaMcpServer(): McpServer {
         "with its qty / avg cost / current value / unrealized P&L.",
     },
     withAudit("get_portfolio", async () =>
-      asText(await getPortfolioSummary(alpaca)),
+      asText(await routedPortfolio(alpaca)),
     ),
   );
 
@@ -252,7 +264,9 @@ export function buildBolsaMcpServer(): McpServer {
         "avgEntryPrice, currentPrice, marketValue, unrealizedPl, and " +
         "changeToday (percent).",
     },
-    withAudit("get_positions", async () => asText(await getPositions(alpaca))),
+    withAudit("get_positions", async () =>
+      asText(await routedPositions(alpaca)),
+    ),
   );
 
   // ---------- Orders ----------
@@ -280,7 +294,7 @@ export function buildBolsaMcpServer(): McpServer {
       },
     },
     withAudit("list_orders", async ({ status, limit }) =>
-      asText(await listOrders(alpaca, { status, limit })),
+      asText(await routedListOrders(alpaca, { status, limit })),
     ),
   );
 
@@ -320,7 +334,7 @@ export function buildBolsaMcpServer(): McpServer {
       },
     },
     withAudit("place_order", async (input) =>
-      asText(await placeOrder(alpaca, input)),
+      asText(await routedPlaceOrder(alpaca, input)),
     ),
   );
 
@@ -333,7 +347,7 @@ export function buildBolsaMcpServer(): McpServer {
       },
     },
     withAudit("cancel_order", async ({ id }) => {
-      await cancelOrder(alpaca, id);
+      await routedCancelOrder(alpaca, id);
       return asText({ id, canceled: true });
     }),
   );
@@ -356,7 +370,7 @@ export function buildBolsaMcpServer(): McpServer {
       },
     },
     withAudit("recent_trades", async ({ limit }) =>
-      asText(await getRecentTrades(alpaca, limit)),
+      asText(await routedRecentTrades(alpaca, limit)),
     ),
   );
 
@@ -454,6 +468,93 @@ export function buildBolsaMcpServer(): McpServer {
         "Check this before placing market orders or scheduling agent loops.",
     },
     withAudit("get_clock", async () => asText(await getMarketClock(alpaca))),
+  );
+
+  // ---------- Backtest (V3 preview) ----------
+
+  server.registerTool(
+    "start_backtest",
+    {
+      description:
+        "Begin a historical backtest. Loads bars for [start, end) and " +
+        "puts the MCP server into backtest mode — subsequent place_order, " +
+        "get_positions, get_portfolio, get_account, list_orders, and " +
+        "recent_trades return simulated state against the loaded bars " +
+        "instead of hitting Alpaca. Drive the simulation by alternating " +
+        "advance_bar / get_backtest_context / place_order, then call " +
+        "end_backtest to persist the result. Only one backtest can be " +
+        "active at a time.",
+      inputSchema: {
+        symbol: symbolShape,
+        timeframe: timeframeEnum,
+        start: z
+          .string()
+          .describe("ISO date or timestamp, inclusive (e.g. 2026-04-01)"),
+        end: z
+          .string()
+          .describe("ISO date or timestamp, exclusive (e.g. 2026-05-01)"),
+        initialCash: z
+          .number()
+          .positive()
+          .describe("Starting cash for the simulation, e.g. 100000"),
+      },
+    },
+    withAudit("start_backtest", async ({ symbol, timeframe, start, end, initialCash }) =>
+      asText(
+        await startBacktest({ symbol, timeframe, start, end, initialCash }),
+      ),
+    ),
+  );
+
+  server.registerTool(
+    "advance_bar",
+    {
+      description:
+        "Move the backtest cursor forward one bar. Returns the new bar " +
+        "(OHLCV + timestamp), current cursor index, total bar count, and " +
+        "whether the run is done (cursor at last bar). The loop should " +
+        "stop calling advance_bar once done=true and proceed to end_backtest.",
+    },
+    withAudit("advance_bar", async () => asText(advanceBar())),
+  );
+
+  server.registerTool(
+    "get_backtest_context",
+    {
+      description:
+        "Read the current backtest state: cursor / total bars, the current " +
+        "bar (OHLCV), simulated cash, equity (mark-to-market), realized " +
+        "P&L so far, open simulated positions, and the full fill history. " +
+        "Use this in place of get_snapshot/recent_trades inside a backtest " +
+        "loop — it returns the same data shape the strategy needs to decide.",
+    },
+    withAudit("get_backtest_context", async () => asText(getBacktestContext())),
+  );
+
+  server.registerTool(
+    "end_backtest",
+    {
+      description:
+        "Finalize the active backtest, persist results to the " +
+        "backtest_runs table, and return summary metrics " +
+        "(final equity, realized P&L, win rate, Sharpe, max drawdown, " +
+        "trade counts). The MCP server returns to live mode after this " +
+        "call. Always call this at the end — without it the run sits in " +
+        "status='running' and the in-memory state leaks until the server " +
+        "restarts.",
+    },
+    withAudit("end_backtest", async () => asText(await endBacktest())),
+  );
+
+  server.registerTool(
+    "get_backtest_status",
+    {
+      description:
+        "Returns { active: boolean } indicating whether a backtest is " +
+        "currently running. Useful for orchestration skills that need to " +
+        "check before starting a new run.",
+    },
+    async () => asText({ active: isBacktestActive() }),
   );
 
   // ---------- Watchlist ----------

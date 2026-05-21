@@ -171,6 +171,105 @@ Your response (after calling `get_session_state` and confirming or creating an a
 >
 > Run it now, or want to tweak first?
 
+## Backtest mode
+
+If the user wants to **backtest** a strategy against historical bars instead of running it live (triggers: "backtest", "simulate against history", "test on last month's data", "dry-run on 5-min bars from April"), the workflow changes substantially.
+
+Key differences vs live:
+
+- **No `/loop`.** The backtest iterates bar-by-bar inside a single Claude turn. `get_backtest_context` returns deterministic state, so there's no memory-drift risk and `/loop`'s interval would only slow things down (1 bar = 1 iteration, a 200-bar run at /loop's minimum interval is hours).
+- **No "wait on open order" pattern.** Backtest V1 fills orders at the current bar's close (market) or against [low, high] (limit) immediately. There are no resting orders to poll.
+- **The driver is `advance_bar`**, not `sleep` or a real-time clock.
+- **All state reads route through `get_backtest_context`** — don't call `get_snapshot`, `recent_trades`, `get_quote`, `get_clock`, or `get_bars` inside the loop. The context already has the current bar, simulated fills, positions, cash, and equity.
+- **An agent session is still required** (`trader-agent` first). It's how the human sees the backtest happening in the UI and how the run is attributed in Analytics.
+
+### Required input (backtest)
+
+In addition to the live fields, you need:
+
+| Field | What it controls | Example |
+|---|---|---|
+| `<BT-SYMBOL>` | Single symbol the backtest trades | `TSLA` |
+| `<BT-TIMEFRAME>` | Bar resolution | `5Min`, `15Min`, `1H`, `1D` |
+| `<BT-START>` | ISO date/time, inclusive | `2026-04-01` |
+| `<BT-END>` | ISO date/time, exclusive | `2026-05-01` |
+| `<BT-INITIAL-CASH>` | Starting cash | `100000` |
+
+V1 backtest is single-symbol. If the user lists multiple, ask which one.
+
+### Output skeleton (backtest)
+
+Render verbatim, fenced. This is **not** a `/loop` — it's a one-shot prompt the user pastes; Claude iterates inside one turn.
+
+```
+Run the <STRATEGY-NAME> backtest via bolsa.
+
+Setup:
+1. Call get_backtest_status. If active=true, refuse and tell the user to call end_backtest first.
+2. Call start_backtest symbol=<BT-SYMBOL> timeframe=<BT-TIMEFRAME> start=<BT-START> end=<BT-END> initialCash=<BT-INITIAL-CASH>. log_thought "backtest started: <BT-SYMBOL> <BT-TIMEFRAME> <BT-START>..<BT-END>, $<BT-INITIAL-CASH> initial".
+
+Iterate (loop entirely inside this turn — do NOT pause between iterations):
+
+1. Call check_should_stop. If stop=true, call end_backtest, log_thought "aborted by user", break.
+
+2. Call get_backtest_context. If done=true, break.
+
+3. Decide the next action from context (at most one place_order per iteration):
+<DECISION-TREE-BACKTEST>
+
+4. Call advance_bar.
+
+After the loop:
+- Call end_backtest. log_thought with a one-line summary: "backtest finished — equity $<finalEquity>, realized $<realizedPnl>, <closed> closed, WR <winRate*100>%, Sharpe <sharpe>, MaxDD $<maxDrawdown>".
+
+Rules:
+- Always log_thought before each place_order and at major decision points.
+- Every branch reads only from get_backtest_context — never from memory of earlier iterations.
+- Qty per order: <QTY>. Never more.
+- Limit and market orders only — stop / stop_limit aren't supported in backtest V1.
+- Single symbol only — never trade anything other than <BT-SYMBOL>.
+- Don't call get_snapshot, recent_trades, get_quote, get_clock, or get_bars inside the loop.
+```
+
+### Decision-tree primitives (backtest)
+
+Rewrite the live primitives in terms of `context = get_backtest_context()`:
+
+- `count` (strategy fills) → `context.fills.length`
+- last fill → `context.fills[context.fills.length - 1]`
+- current price → `context.bar.close`
+- current position qty → `context.positions[0]?.qty ?? 0`
+
+#### Template A-BT — alternating scalping (backtest variant of A)
+
+```
+   - If context.fills.length == 0: Place BUY LIMIT <QTY> <BT-SYMBOL> at (context.bar.close − <OFFSET>). log_thought "trade 1: anchor=<close>, buying at <close−OFFSET>".
+   - Else if last fill was BUY: anchor = its price. Place SELL LIMIT <QTY> <BT-SYMBOL> at (anchor + <OFFSET>). log_thought "trade <n+1>: anchor=<anchor>, selling at <anchor+OFFSET>".
+   - Else (last fill was SELL): anchor = its price. Place BUY LIMIT <QTY> <BT-SYMBOL> at (anchor − <OFFSET>). log_thought "trade <n+1>: anchor=<anchor>, buying at <anchor−OFFSET>".
+```
+
+#### Template B-BT — DCA-down ladder
+```
+   - If context.fills.length == 0: Place BUY LIMIT <QTY> <BT-SYMBOL> at (context.bar.close − <STEP>). log_thought "rung 1, buying at <close−STEP>".
+   - Else: anchor = last fill's price. Place BUY LIMIT <QTY> <BT-SYMBOL> at (anchor − <STEP>). log_thought "rung <n+1>, buying at <anchor−STEP>".
+```
+
+#### Template C-BT — momentum entry + protected exit
+```
+   - If context.positions.length == 0: If <ENTRY-CONDITION-FROM-BAR>, market BUY <QTY> <BT-SYMBOL>. log_thought "entry: <reason>".
+   - Else: pos = context.positions[0]. plPct = ((context.bar.close − pos.avgCost) / pos.avgCost) * 100. If plPct >= <TAKE-PROFIT-PCT>, market SELL pos.qty. log_thought "take-profit at <plPct>%". Else if plPct <= <STOP-LOSS-PCT>, market SELL pos.qty. log_thought "stop-loss at <plPct>%". Else log_thought "holding, plPct=<plPct>%".
+```
+
+### Workflow when invoked for a backtest
+
+Same as live, except:
+
+1. Trader-agent session is still required (so the human sees the run streaming).
+2. Confirm the five backtest params before generating — never invent symbol, dates, or initial cash.
+3. Emit the **backtest output skeleton** instead of the `/loop` one.
+4. Watch note: "Agent tab streams every advance_bar and place_order; Analytics → BACKTESTS section lists the row as RUNNING then COMPLETED."
+5. Stop instructions: "Press `S` in the browser to abort — the loop will call end_backtest before exiting."
+
 ## Safety hard rules
 
 - ALWAYS ensure an agent session is active before generating the prompt (`get_session_state` → invoke `trader-agent` if null).
@@ -182,3 +281,4 @@ Your response (after calling `get_session_state` and confirming or creating an a
 - If the user asks for "flatten everything", "close all positions", or "reset", refuse and tell them to use the UI's `:reset` palette command directly.
 - If the user requests `qty > 10` or omits an exit condition, surface a warning in your reply before showing the prompt and confirm before generating.
 - Don't include markdown styling INSIDE the `/loop` body — Claude Code's loop input is plain text.
+- In backtest mode: NEVER call live trading tools mid-backtest. start_backtest puts the MCP server into a mode where place_order / get_positions / get_portfolio / get_account return simulated state. Calling end_backtest restores live mode; calling end_session does NOT.

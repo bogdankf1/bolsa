@@ -15,6 +15,7 @@ import { useHotkey } from "@/lib/hotkeys";
 import { registerFocusTarget } from "@/lib/focus";
 import { useAudio } from "@/lib/audio";
 import { useSetConnectionStatus } from "@/lib/connection";
+import { useChoreography } from "@/lib/choreography";
 import type { Snapshot } from "@/core/types";
 
 type Props = {
@@ -32,6 +33,7 @@ const EMPTY_SYMBOLS: string[] = [];
 
 export function Watchlist({ selected, onSelect, active, headless }: Props) {
   const { data: wl } = useWatchlist();
+  const { activeAgentSymbol } = useChoreography();
   // Stabilize the array reference so downstream hooks/memos don't churn
   // every render when wl is undefined.
   const symbols = wl?.symbols ?? EMPTY_SYMBOLS;
@@ -204,6 +206,7 @@ export function Watchlist({ selected, onSelect, active, headless }: Props) {
             tickDir={live.tickDir[sym] ?? null}
             tickSeq={live.tickSeq[sym] ?? 0}
             isSelected={sym === selected}
+            isAgentTouched={sym === activeAgentSymbol}
             onSelect={onSelect}
           />
         ))}
@@ -290,6 +293,7 @@ type RowProps = {
   tickDir: "up" | "down" | null;
   tickSeq: number;
   isSelected: boolean;
+  isAgentTouched: boolean;
   onSelect: (sym: string) => void;
 };
 
@@ -299,6 +303,7 @@ const WatchlistRow = memo(function WatchlistRow({
   tickDir,
   tickSeq,
   isSelected,
+  isAgentTouched,
   onSelect,
 }: RowProps) {
   const priceRef = useRef<HTMLSpanElement>(null);
@@ -325,11 +330,26 @@ const WatchlistRow = memo(function WatchlistRow({
         isSelected
           ? "bg-[color-mix(in_srgb,var(--color-phosphor)_15%,transparent)] glow"
           : "hover:bg-[color-mix(in_srgb,var(--color-phosphor)_6%,transparent)]"
+      } ${
+        isAgentTouched
+          ? "border-l-2 border-[var(--color-amber)] [box-shadow:inset_2px_0_8px_rgba(255,176,0,0.25)]"
+          : "border-l-2 border-transparent"
       }`}
     >
-      <span className="font-medium">
+      <span
+        className={
+          isAgentTouched
+            ? "text-[var(--color-amber)] [text-shadow:0_0_4px_rgba(255,176,0,0.6)]"
+            : "font-medium"
+        }
+      >
         {isSelected ? "▸ " : "  "}
         {symbol}
+        {isAgentTouched && (
+          <span className="ml-1 animate-pulse" aria-hidden>
+            ◉
+          </span>
+        )}
       </span>
       <span ref={priceRef} className="text-right">
         {s ? fmtPrice(s.lastPrice) : "—"}

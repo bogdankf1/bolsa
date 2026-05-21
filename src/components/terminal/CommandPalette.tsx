@@ -14,7 +14,8 @@ type Command = {
 const ALPACA_DASHBOARD_URL = "https://app.alpaca.markets/paper/dashboard/overview";
 
 export function CommandPalette() {
-  const { settings, toggleNormalMode, toggleAudioMuted } = useSettings();
+  const { settings, toggleNormalMode, toggleAudioMuted, toggleAgentFocus } =
+    useSettings();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [highlightIdx, setHighlightIdx] = useState(0);
@@ -56,12 +57,40 @@ export function CommandPalette() {
         },
       },
       {
+        name: settings.agentFocus ? "unfocus" : "focus",
+        hint: settings.agentFocus
+          ? "stop auto tab + chart switching when the agent acts"
+          : "auto-switch tabs and chart to follow the agent",
+        run: () => {
+          toggleAgentFocus();
+          close();
+        },
+      },
+      {
+        name: "analytics",
+        hint: "jump to the analytics tab (P&L, win rate, sessions)",
+        run: () => {
+          window.dispatchEvent(new KeyboardEvent("keydown", { key: "n" }));
+          close();
+        },
+      },
+      {
         name: "help",
         hint: "show available commands",
-        run: () => setStatus("commands: reset · normal/crt · mute/unmute · help"),
+        run: () =>
+          setStatus(
+            "commands: reset · normal/crt · mute/unmute · focus/unfocus · analytics · help",
+          ),
       },
     ],
-    [settings.normalMode, settings.audioMuted, toggleNormalMode, toggleAudioMuted],
+    [
+      settings.normalMode,
+      settings.audioMuted,
+      settings.agentFocus,
+      toggleNormalMode,
+      toggleAudioMuted,
+      toggleAgentFocus,
+    ],
   );
 
   const filtered = useMemo(() => {

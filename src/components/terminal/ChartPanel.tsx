@@ -5,6 +5,8 @@ import { Panel } from "./Panel";
 import { fmtPrice, fmtVolume } from "@/lib/format";
 import { useBars, useOrders, useSnapshots } from "@/lib/hooks";
 import { usePersistedState } from "@/lib/persisted";
+import { useChoreography } from "@/lib/choreography";
+import { useBacktestSelection } from "@/lib/backtest-selection";
 import type { Bar, Order, Timeframe } from "@/core/types";
 
 const TIMEFRAMES: Timeframe[] = [
@@ -40,7 +42,7 @@ const isChartKind = (v: string): v is ChartKind =>
 type Props = { symbol: string | null };
 
 export function ChartPanel({ symbol }: Props) {
-  const [tf, setTf] = usePersistedState<Timeframe>(
+  const [persistedTf, setPersistedTf] = usePersistedState<Timeframe>(
     "bolsa.chart.tf",
     "1D",
     isTimeframe,
@@ -50,7 +52,33 @@ export function ChartPanel({ symbol }: Props) {
     "candle",
     isChartKind,
   );
-  const { data: barsData, isLoading } = useBars(symbol, tf);
+  const { activeAgentSymbol } = useChoreography();
+  const { selectedRun, select: selectBacktest } = useBacktestSelection();
+  const isAgentSymbol = symbol != null && symbol === activeAgentSymbol;
+  const isBacktestSymbol =
+    selectedRun != null && symbol != null && symbol === selectedRun.symbol;
+
+  // When a backtest is selected for this symbol, force the chart to the
+  // backtest's timeframe and fetch the exact bar range so markers align.
+  // The user's persisted tf is preserved — it's restored when they click
+  // any tf button (which also deselects the backtest).
+  const tf: Timeframe =
+    isBacktestSymbol && isTimeframe(selectedRun!.timeframe)
+      ? (selectedRun!.timeframe as Timeframe)
+      : persistedTf;
+  const handleTfClick = (next: Timeframe) => {
+    if (isBacktestSymbol) selectBacktest(null);
+    setPersistedTf(next);
+  };
+
+  const barOpts =
+    isBacktestSymbol && selectedRun
+      ? {
+          start: selectedRun.rangeStart.slice(0, 10),
+          end: selectedRun.rangeEnd.slice(0, 10),
+        }
+      : {};
+  const { data: barsData, isLoading } = useBars(symbol, tf, barOpts);
   const { data: snapData } = useSnapshots(symbol ? [symbol] : []);
   const { data: openOrders } = useOrders("open");
   const snap = symbol ? snapData?.snapshots[symbol] : undefined;
@@ -63,6 +91,11 @@ export function ChartPanel({ symbol }: Props) {
       (o) => o.symbol === symbol && o.limitPrice != null,
     );
   }, [symbol, openOrders]);
+
+  const backtestFills = useMemo(
+    () => (isBacktestSymbol ? selectedRun?.fills ?? [] : []),
+    [isBacktestSymbol, selectedRun],
+  );
 
   const { lo, hi } = useMemo(() => {
     if (candles.length === 0) return { lo: 0, hi: 1 };
@@ -83,6 +116,11 @@ export function ChartPanel({ symbol }: Props) {
       if (snap.prevClose < lo) lo = snap.prevClose;
       if (snap.prevClose > hi) hi = snap.prevClose;
     }
+    // Fold backtest fill prices into the range so markers don't clip.
+    for (const f of backtestFills) {
+      if (f.price < lo) lo = f.price;
+      if (f.price > hi) hi = f.price;
+    }
     if (lo === hi) {
       lo -= 1;
       hi += 1;
@@ -90,7 +128,7 @@ export function ChartPanel({ symbol }: Props) {
     // Small visual padding
     const pad = (hi - lo) * 0.04;
     return { lo: lo - pad, hi: hi + pad };
-  }, [candles, symbolOpenOrders, snap?.prevClose]);
+  }, [candles, symbolOpenOrders, snap?.prevClose, backtestFills]);
 
   const W = 800;
   const H = 280;
@@ -142,6 +180,34 @@ export function ChartPanel({ symbol }: Props) {
     setHover(null);
   }
 
+  // Map each backtest fill to its closest bar index so markers sit on a
+  // candle rather than between them. Linear scan is fine — candles ≤200.
+  const fillMarkers = useMemo(() => {
+    if (backtestFills.length === 0 || candles.length === 0) return [];
+    const barTimes = candles.map((c) => Date.parse(c.timestamp));
+    return backtestFills.map((f, k) => {
+      const fillMs = Date.parse(f.ts);
+      let closestIdx = 0;
+      let closestDiff = Math.abs(barTimes[0] - fillMs);
+      for (let i = 1; i < barTimes.length; i++) {
+        const d = Math.abs(barTimes[i] - fillMs);
+        if (d < closestDiff) {
+          closestDiff = d;
+          closestIdx = i;
+        }
+      }
+      return {
+        key: k,
+        i: closestIdx,
+        ts: f.ts,
+        side: f.side,
+        qty: f.qty,
+        price: f.price,
+        pnl: f.pnl,
+      };
+    });
+  }, [backtestFills, candles]);
+
   const linePath = useMemo(() => {
     if (kind !== "line" || candles.length === 0) return "";
     return candles
@@ -159,7 +225,29 @@ export function ChartPanel({ symbol }: Props) {
       title={`Chart — ${symbol ?? "—"} — ${TF_LABEL[tf]}`}
       rightSlot={
         <div className="flex items-center gap-2 text-[10px]">
-          <div className="flex">
+          {isBacktestSymbol && (
+            <span
+              className="flex items-center gap-1 border border-[var(--color-phosphor)] px-1.5 py-[1px] text-[var(--color-phosphor)] glow"
+              title={`backtest ${selectedRun?.timeframe ?? ""} · ${
+                fillMarkers.length
+              } fills`}
+            >
+              ◆ BACKTEST
+            </span>
+          )}
+          {isAgentSymbol && (
+            <span
+              className="flex items-center gap-1 border border-[var(--color-amber)] px-1.5 py-[1px] text-[var(--color-amber)] [text-shadow:0_0_4px_rgba(255,176,0,0.6)]"
+              title="agent is currently focused on this symbol"
+            >
+              <span
+                className="inline-block size-1.5 animate-pulse rounded-full bg-[var(--color-amber)] [box-shadow:0_0_4px_var(--color-amber)]"
+                aria-hidden
+              />
+              AGENT
+            </span>
+          )}
+          <div className={`flex ${isBacktestSymbol ? "opacity-60" : ""}`}>
             <button
               onClick={() => setKind("candle")}
               className={`px-[6px] py-[1px] ${
@@ -187,7 +275,14 @@ export function ChartPanel({ symbol }: Props) {
             {TIMEFRAMES.map((t) => (
               <button
                 key={t}
-                onClick={() => setTf(t)}
+                onClick={() => handleTfClick(t)}
+                title={
+                  isBacktestSymbol && t === tf
+                    ? "locked to backtest timeframe — click another to exit"
+                    : isBacktestSymbol
+                      ? "click to exit backtest view"
+                      : undefined
+                }
                 className={`px-[6px] py-[1px] ${
                   t === tf
                     ? "bg-[var(--color-phosphor)] text-[var(--color-bg)] [text-shadow:none]"
@@ -300,6 +395,44 @@ export function ChartPanel({ symbol }: Props) {
                         strokeWidth={1.5}
                       />
                     )}
+
+                {/* Backtest fill markers — triangle above bar for buys,
+                    below for sells. Tooltip on hover. */}
+                {fillMarkers.map((m) => {
+                  const cx = xFor(m.i);
+                  const cy = yFor(m.price);
+                  const size = 4.5;
+                  const yOff = m.side === "buy" ? size + 1 : -(size + 1);
+                  const tipY = cy + yOff;
+                  // Points: triangle pointing UP for buys (above bar),
+                  // pointing DOWN for sells (below bar).
+                  const points =
+                    m.side === "buy"
+                      ? `${cx},${tipY - size} ${cx - size},${tipY + size} ${cx + size},${tipY + size}`
+                      : `${cx},${tipY + size} ${cx - size},${tipY - size} ${cx + size},${tipY - size}`;
+                  const color =
+                    m.side === "buy" ? "#00FF41" : "#FF3333";
+                  const pnlSuffix =
+                    m.pnl != null
+                      ? ` · pnl ${m.pnl >= 0 ? "+" : ""}${m.pnl.toFixed(2)}`
+                      : "";
+                  return (
+                    <g key={m.key}>
+                      <polygon
+                        points={points}
+                        fill={color}
+                        stroke="#0a0a0a"
+                        strokeWidth={0.5}
+                        opacity={0.95}
+                      >
+                        <title>
+                          {m.side.toUpperCase()} {m.qty} @ {m.price.toFixed(2)}
+                          {pnlSuffix}
+                        </title>
+                      </polygon>
+                    </g>
+                  );
+                })}
 
                 {/* Crosshair lines */}
                 {hover && (

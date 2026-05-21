@@ -152,26 +152,40 @@ const LOOKBACK_DAYS: Record<Timeframe, number> = {
   "1Y": 400,
 };
 
+export interface GetBarsOptions {
+  limit?: number;
+  /** Optional explicit start (ISO date or timestamp). Overrides LOOKBACK_DAYS. */
+  start?: string;
+  /** Optional explicit end (ISO date or timestamp), exclusive. */
+  end?: string;
+}
+
 export async function getBars(
   client: AlpacaClient,
   symbol: string,
   timeframe: Timeframe,
-  limit?: number,
+  opts: GetBarsOptions | number = {},
 ): Promise<Bar[]> {
-  const effectiveLimit = limit ?? DEFAULT_BAR_LIMIT[timeframe];
-  const start = new Date(
-    Date.now() - LOOKBACK_DAYS[timeframe] * 24 * 60 * 60 * 1000,
-  )
-    .toISOString()
-    .slice(0, 10);
+  // Back-compat: getBars(c, s, tf, limitNumber) still works.
+  const options: GetBarsOptions =
+    typeof opts === "number" ? { limit: opts } : opts;
+
+  const effectiveLimit = options.limit ?? DEFAULT_BAR_LIMIT[timeframe];
+  const start =
+    options.start ??
+    new Date(Date.now() - LOOKBACK_DAYS[timeframe] * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
 
   const r = await client.bars(symbol, {
     timeframe: ALPACA_TIMEFRAME[timeframe],
     limit: 10_000, // fetch wide, slice client-side to most recent N
     start,
+    ...(options.end ? { end: options.end } : {}),
   });
 
   const bars = (r.bars ?? []).map(adaptBar);
-  // Keep the most recent `effectiveLimit` bars
+  // Explicit range — return as-is. Otherwise keep the most recent N.
+  if (options.start || options.end) return bars;
   return bars.slice(-effectiveLimit);
 }

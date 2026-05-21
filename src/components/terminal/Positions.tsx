@@ -5,6 +5,7 @@ import { Panel } from "./Panel";
 import { fmtPct, fmtPrice, fmtUsd } from "@/lib/format";
 import { placeOrder, usePortfolio } from "@/lib/hooks";
 import { useHotkey } from "@/lib/hotkeys";
+import { useChoreography } from "@/lib/choreography";
 import type { Position } from "@/core/types";
 
 type Props = {
@@ -18,6 +19,7 @@ type Props = {
 
 export function Positions({ selected, onSelect, active, headless }: Props) {
   const { data } = usePortfolio();
+  const { activeAgentSymbol } = useChoreography();
   const positions = data?.positions ?? [];
 
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -163,6 +165,7 @@ export function Positions({ selected, onSelect, active, headless }: Props) {
             key={p.symbol}
             position={p}
             isSelected={p.symbol === selected}
+            isAgentTouched={p.symbol === activeAgentSymbol}
             isBusy={busyId === p.symbol}
             onSelect={onSelect}
           />
@@ -201,6 +204,7 @@ export function Positions({ selected, onSelect, active, headless }: Props) {
 type RowProps = {
   position: Position;
   isSelected: boolean;
+  isAgentTouched: boolean;
   isBusy: boolean;
   onSelect: (sym: string) => void;
 };
@@ -208,6 +212,7 @@ type RowProps = {
 const PositionRow = memo(function PositionRow({
   position: p,
   isSelected,
+  isAgentTouched,
   isBusy,
   onSelect,
 }: RowProps) {
@@ -219,11 +224,26 @@ const PositionRow = memo(function PositionRow({
         isSelected
           ? "bg-[color-mix(in_srgb,var(--color-phosphor)_15%,transparent)] glow"
           : "hover:bg-[color-mix(in_srgb,var(--color-phosphor)_6%,transparent)]"
-      } ${isBusy ? "opacity-50" : ""}`}
+      } ${isBusy ? "opacity-50" : ""} ${
+        isAgentTouched
+          ? "border-l-2 border-[var(--color-amber)] [box-shadow:inset_2px_0_8px_rgba(255,176,0,0.25)]"
+          : "border-l-2 border-transparent"
+      }`}
     >
-      <span className="font-medium">
+      <span
+        className={
+          isAgentTouched
+            ? "text-[var(--color-amber)] [text-shadow:0_0_4px_rgba(255,176,0,0.6)]"
+            : "font-medium"
+        }
+      >
         {isSelected ? "▸ " : "  "}
         {p.symbol}
+        {isAgentTouched && (
+          <span className="ml-1 animate-pulse" aria-hidden>
+            ◉
+          </span>
+        )}
       </span>
       <span className="text-right">{p.qty}</span>
       <span className="text-right text-[var(--color-phosphor-dim)]">

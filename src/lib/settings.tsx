@@ -12,18 +12,25 @@ import {
 export type Settings = {
   normalMode: boolean;
   audioMuted: boolean;
+  agentFocus: boolean;
 };
 
 type SettingsContextValue = {
   settings: Settings;
   setNormalMode: (v: boolean) => void;
   setAudioMuted: (v: boolean) => void;
+  setAgentFocus: (v: boolean) => void;
   toggleNormalMode: () => void;
   toggleAudioMuted: () => void;
+  toggleAgentFocus: () => void;
 };
 
 const STORAGE_KEY = "bolsa:settings";
-const DEFAULTS: Settings = { normalMode: false, audioMuted: true };
+const DEFAULTS: Settings = {
+  normalMode: false,
+  audioMuted: true,
+  agentFocus: true,
+};
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);
 
@@ -40,6 +47,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setSettings({
           normalMode: parsed.normalMode ?? DEFAULTS.normalMode,
           audioMuted: parsed.audioMuted ?? DEFAULTS.audioMuted,
+          agentFocus: parsed.agentFocus ?? DEFAULTS.agentFocus,
         });
       }
     } catch {
@@ -67,12 +75,20 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     (v: boolean) => setSettings((s) => ({ ...s, audioMuted: v })),
     [],
   );
+  const setAgentFocus = useCallback(
+    (v: boolean) => setSettings((s) => ({ ...s, agentFocus: v })),
+    [],
+  );
   const toggleNormalMode = useCallback(
     () => setSettings((s) => ({ ...s, normalMode: !s.normalMode })),
     [],
   );
   const toggleAudioMuted = useCallback(
     () => setSettings((s) => ({ ...s, audioMuted: !s.audioMuted })),
+    [],
+  );
+  const toggleAgentFocus = useCallback(
+    () => setSettings((s) => ({ ...s, agentFocus: !s.agentFocus })),
     [],
   );
 
@@ -82,8 +98,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         settings,
         setNormalMode,
         setAudioMuted,
+        setAgentFocus,
         toggleNormalMode,
         toggleAudioMuted,
+        toggleAgentFocus,
       }}
     >
       {children}
